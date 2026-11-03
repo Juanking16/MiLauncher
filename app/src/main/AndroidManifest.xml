@@ -9,7 +9,11 @@
     </queries>
 
     <application
-        android:label="MiLauncher"
+        android:label="JUAN LAUNCHER"
+            <application
+        android:label="Juan Launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.MiLauncher">
 
         <activity
