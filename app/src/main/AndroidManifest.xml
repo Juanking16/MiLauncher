@@ -8,13 +8,12 @@
         </intent>
     </queries>
 
-    <application
-        android:label="JUAN LAUNCHER" 
+   <application
         android:label="Juan Launcher"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.MiLauncher">
-
+        
         <activity
             android:name=".MainActivity"
             android:exported="true"
