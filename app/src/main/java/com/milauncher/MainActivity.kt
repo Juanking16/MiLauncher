@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -36,9 +37,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -47,6 +50,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,6 +58,9 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -68,6 +75,8 @@ data class AppItem(
 
 data class Entrada(val letra: String, val app: AppItem?)
 
+data class Atajo(val etiqueta: String, val icono: ImageBitmap, val accion: () -> Unit)
+
 val coloresFondo = listOf(
     Color(0xFF000000),
     Color(0xFF0B1B3A),
@@ -76,6 +85,29 @@ val coloresFondo = listOf(
     Color(0xFF2B2B2B)
 )
 val nombresColor = listOf("Negro", "Azul", "Violeta", "Verde", "Gris")
+
+val sombraTexto = Shadow(color = Color(0xAA000000), offset = Offset(0f, 2f), blurRadius = 6f)
+
+// Apps que se colocan solas en el dock (abajo) y en el inicio, buscadas por nombre
+val dockClaves = listOf(
+    listOf("Teléfono", "Telefono", "Phone", "Llamadas"),
+    listOf("Mensajes", "Messages"),
+    listOf("Cámara", "Camara", "Camera"),
+    listOf("Brave", "Chrome", "Internet", "Samsung Internet", "Firefox")
+)
+val inicioClaves = listOf(
+    listOf("Galería", "Galeria", "Gallery"),
+    listOf("Reloj", "Clock"),
+    listOf("Calendario", "Calendar"),
+    listOf("Mis archivos", "Files", "Archivos"),
+    listOf("WhatsApp"),
+    listOf("Instagram"),
+    listOf("Ajustes", "Settings"),
+    listOf("Play Store", "Google Play Store")
+)
+
+fun buscarApp(apps: List<AppItem>, claves: List<String>): AppItem? =
+    claves.firstNotNullOfOrNull { c -> apps.firstOrNull { it.label.equals(c, ignoreCase = true) } }
 
 fun formaIcono(i: Int): Shape = when (i) {
     1 -> CircleShape
@@ -158,6 +190,20 @@ class MainActivity : ComponentActivity() {
         val letras = remember(entradas) { entradas.filter { it.app == null }.map { it.letra } }
         val listaEstado = rememberLazyListState()
 
+        // Apps automáticas del inicio
+        val dockApps = remember(apps) {
+            dockClaves.mapNotNull { buscarApp(apps, it) }.distinctBy { it.packageName }
+        }
+        val inicioApps = remember(apps) {
+            inicioClaves.mapNotNull { buscarApp(apps, it) }
+                .distinctBy { it.packageName }
+                .filter { a -> dockApps.none { d -> d.packageName == a.packageName } }
+                .take(7)
+        }
+        val iconoPropio = remember {
+            packageManager.getApplicationIcon(packageName).toBitmap(128, 128).asImageBitmap()
+        }
+
         val progreso = remember { Animatable(0f) }
         val cajonAbierto = progreso.value > 0.01f
         val alturaPx = with(LocalDensity.current) {
@@ -201,6 +247,7 @@ class MainActivity : ComponentActivity() {
             Modifier.padding(start = 14.dp, end = 14.dp, top = 70.dp, bottom = 20.dp)
         else Modifier
         val opacidadCajon = if (ajustes.tipoCajon == 1) 1f else ajustes.transparenciaCajon
+        val bloqueo = remember { MutableInteractionSource() }
 
         LaunchedEffect(Unit) { apps = loadApps() }
         LaunchedEffect(cajonAbierto) { if (!cajonAbierto) busqueda = "" }
@@ -232,6 +279,7 @@ class MainActivity : ComponentActivity() {
                     onIr = { pantalla = it }
                 )
             } else {
+                // Pantalla de inicio: fondo limpio, reloj, apps automáticas y dock
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -249,39 +297,95 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                 ) {
-                    Column(
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.Center)
+                            .fillMaxSize()
                             .graphicsLayer {
                                 val p = progreso.value.coerceIn(0f, 1f)
                                 alpha = 1f - p
-                                scaleX = 1f - 0.08f * p
-                                scaleY = 1f - 0.08f * p
-                            },
-                        horizontalAlignment = Alignment.CenterHorizontally
+                                scaleX = 1f - 0.05f * p
+                                scaleY = 1f - 0.05f * p
+                            }
                     ) {
-                        Text("Juan Launcher", color = Color.White, fontSize = 28.sp)
-                        Spacer(Modifier.height(8.dp))
-                        Text("Desliza hacia arriba", color = Color(0xAAFFFFFF), fontSize = 14.sp)
+                        if (ajustes.mostrarReloj) {
+                            Reloj(
+                                Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(start = 28.dp, top = 36.dp)
+                            )
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                        ) {
+                            val atajosInicio = listOf(
+                                Atajo("Juan Launcher", iconoPropio) { pantalla = 1 }
+                            ) + inicioApps.map { app ->
+                                Atajo(app.label, app.icon) { openApp(app, ajustes.animacion) }
+                            }
+
+                            atajosInicio.chunked(4).forEach { fila ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                ) {
+                                    fila.forEach { atajo ->
+                                        IconoAtajo(
+                                            atajo = atajo,
+                                            tamano = 58,
+                                            forma = forma,
+                                            activo = !cajonAbierto,
+                                            mostrarNombre = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    repeat(4 - fila.size) { Spacer(Modifier.weight(1f)) }
+                                }
+                            }
+
+                            if (dockApps.isNotEmpty()) {
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(30.dp))
+                                        .background(Color(0x33FFFFFF))
+                                        .padding(vertical = 10.dp)
+                                ) {
+                                    dockApps.forEach { app ->
+                                        IconoAtajo(
+                                            atajo = Atajo(app.label, app.icon) {
+                                                openApp(app, ajustes.animacion)
+                                            },
+                                            tamano = 56,
+                                            forma = forma,
+                                            activo = !cajonAbierto,
+                                            mostrarNombre = false,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .clickable(enabled = !cajonAbierto) { abrir() }
+                                    .padding(horizontal = 40.dp, vertical = 12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = 44.dp, height = 4.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(Color(0x88FFFFFF))
+                                )
+                            }
+                        }
                     }
-                    Text(
-                        text = "⌃",
-                        color = Color.White,
-                        fontSize = 30.sp,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .clickable { abrir() }
-                            .padding(20.dp)
-                    )
-                    Text(
-                        text = "⚙",
-                        color = Color.White,
-                        fontSize = 24.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .clickable { pantalla = 1 }
-                            .padding(14.dp)
-                    )
                 }
 
                 if (cajonAbierto) {
@@ -364,6 +468,7 @@ class MainActivity : ComponentActivity() {
                             .then(margen)
                             .clip(recorte)
                             .background(colorBase.copy(alpha = opacidadCajon))
+                            .clickable(interactionSource = bloqueo, indication = null) { }
                     ) {
                         if (buscarArriba) {
                             barra()
@@ -466,6 +571,74 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+fun Reloj(modifier: Modifier = Modifier) {
+    var ahora by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            ahora = System.currentTimeMillis()
+            delay(15_000)
+        }
+    }
+    val hora = remember(ahora) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ahora))
+    }
+    val fecha = remember(ahora) {
+        SimpleDateFormat("EEEE, d 'de' MMMM", Locale.forLanguageTag("es"))
+            .format(Date(ahora))
+            .replaceFirstChar { it.uppercase() }
+    }
+    Column(modifier = modifier) {
+        Text(
+            text = hora,
+            color = Color.White,
+            fontSize = 56.sp,
+            fontWeight = FontWeight.Light,
+            style = TextStyle(shadow = sombraTexto)
+        )
+        Text(
+            text = fecha,
+            color = Color.White,
+            fontSize = 16.sp,
+            style = TextStyle(shadow = sombraTexto)
+        )
+    }
+}
+
+@Composable
+fun IconoAtajo(
+    atajo: Atajo,
+    tamano: Int,
+    forma: Shape,
+    activo: Boolean,
+    mostrarNombre: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clickable(enabled = activo) { atajo.accion() }
+            .padding(vertical = 4.dp)
+    ) {
+        Image(
+            bitmap = atajo.icono,
+            contentDescription = atajo.etiqueta,
+            modifier = Modifier.size(tamano.dp).clip(forma)
+        )
+        if (mostrarNombre) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = atajo.etiqueta,
+                color = Color.White,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(shadow = sombraTexto)
+            )
+        }
+    }
+}
+
+@Composable
 fun Selector(
     titulo: String,
     opciones: List<String>,
@@ -554,7 +727,7 @@ fun PantallaAjustes(
                     onCambio(ajustes.copy(colorFondo = it))
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("Opacidad del fondo: ${(fondo * 100).toInt()}%", color = Color.White)
+                Text("Oscuridad del fondo: ${(fondo * 100).toInt()}%", color = Color.White)
                 Slider(
                     value = fondo,
                     onValueChange = { fondo = it },
@@ -565,10 +738,20 @@ fun PantallaAjustes(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Mostrar nombres", color = Color.White, modifier = Modifier.weight(1f))
+                    Text("Mostrar nombres en el cajón", color = Color.White, modifier = Modifier.weight(1f))
                     Switch(
                         checked = ajustes.mostrarNombres,
                         onCheckedChange = { onCambio(ajustes.copy(mostrarNombres = it)) }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mostrar reloj en el inicio", color = Color.White, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = ajustes.mostrarReloj,
+                        onCheckedChange = { onCambio(ajustes.copy(mostrarReloj = it)) }
                     )
                 }
                 Spacer(Modifier.height(8.dp))

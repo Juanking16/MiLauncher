@@ -11,7 +11,7 @@ private val Context.dataStore by preferencesDataStore(name = "ajustes")
 data class Ajustes(
     val columnas: Int = 4,
     val tamanoIcono: Int = 52,
-    val fondoOscuro: Float = 0.6f,
+    val fondoOscuro: Float = 0.2f,
     val mostrarNombres: Boolean = true,
     val animacion: Int = 1,
     val animCajon: Int = 0,
@@ -20,7 +20,8 @@ data class Ajustes(
     val espaciado: Int = 10,
     val transparenciaCajon: Float = 0.85f,
     val colorFondo: Int = 0,
-    val tipoCajon: Int = 0
+    val tipoCajon: Int = 1,
+    val mostrarReloj: Boolean = true
 )
 
 class SettingsStore(private val context: Context) {
@@ -36,12 +37,13 @@ class SettingsStore(private val context: Context) {
     private val kTransp = floatPreferencesKey("transparencia_cajon")
     private val kColor = intPreferencesKey("color_fondo")
     private val kTipo = intPreferencesKey("tipo_cajon")
+    private val kReloj = booleanPreferencesKey("mostrar_reloj")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
             columnas = p[kColumnas] ?: 4,
             tamanoIcono = p[kTamano] ?: 52,
-            fondoOscuro = p[kFondo] ?: 0.6f,
+            fondoOscuro = p[kFondo] ?: 0.2f,
             mostrarNombres = p[kNombres] ?: true,
             animacion = p[kAnim] ?: 1,
             animCajon = p[kAnimCajon] ?: 0,
@@ -50,7 +52,8 @@ class SettingsStore(private val context: Context) {
             espaciado = p[kEspaciado] ?: 10,
             transparenciaCajon = p[kTransp] ?: 0.85f,
             colorFondo = p[kColor] ?: 0,
-            tipoCajon = p[kTipo] ?: 0
+            tipoCajon = p[kTipo] ?: 1,
+            mostrarReloj = p[kReloj] ?: true
         )
     }
 
@@ -68,6 +71,7 @@ class SettingsStore(private val context: Context) {
             p[kTransp] = a.transparenciaCajon
             p[kColor] = a.colorFondo
             p[kTipo] = a.tipoCajon
+            p[kReloj] = a.mostrarReloj
         }
     }
 }
