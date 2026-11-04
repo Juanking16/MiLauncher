@@ -12,7 +12,9 @@ data class Ajustes(
     val columnas: Int = 4,
     val tamanoIcono: Int = 52,
     val fondoOscuro: Float = 0.6f,
-    val mostrarNombres: Boolean = true
+    val mostrarNombres: Boolean = true,
+    val animacion: Int = 1,
+    val animCajon: Int = 0
 )
 
 class SettingsStore(private val context: Context) {
@@ -20,13 +22,17 @@ class SettingsStore(private val context: Context) {
     private val kTamano = intPreferencesKey("tamano_icono")
     private val kFondo = floatPreferencesKey("fondo_oscuro")
     private val kNombres = booleanPreferencesKey("mostrar_nombres")
+    private val kAnim = intPreferencesKey("animacion")
+    private val kAnimCajon = intPreferencesKey("anim_cajon")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
             columnas = p[kColumnas] ?: 4,
             tamanoIcono = p[kTamano] ?: 52,
             fondoOscuro = p[kFondo] ?: 0.6f,
-            mostrarNombres = p[kNombres] ?: true
+            mostrarNombres = p[kNombres] ?: true,
+            animacion = p[kAnim] ?: 1,
+            animCajon = p[kAnimCajon] ?: 0
         )
     }
 
@@ -36,6 +42,8 @@ class SettingsStore(private val context: Context) {
             p[kTamano] = a.tamanoIcono
             p[kFondo] = a.fondoOscuro
             p[kNombres] = a.mostrarNombres
+            p[kAnim] = a.animacion
+            p[kAnimCajon] = a.animCajon
         }
     }
 }
