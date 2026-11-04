@@ -51,6 +51,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -79,6 +82,14 @@ fun formaIcono(i: Int): Shape = when (i) {
     2 -> RoundedCornerShape(14.dp)
     3 -> RoundedCornerShape(4.dp)
     else -> RectangleShape
+}
+
+// Pantallas de ajustes: 0 = cerrado, 1 = menú, 2 = Apariencia, 3 = Cajón, 4 = Animaciones
+fun atrasDe(p: Int): Int = when (p) {
+    3 -> 2
+    2 -> 1
+    4 -> 1
+    else -> 0
 }
 
 class MainActivity : ComponentActivity() {
@@ -123,14 +134,13 @@ class MainActivity : ComponentActivity() {
         val ajustes by store.flow.collectAsState(initial = Ajustes())
         val scope = rememberCoroutineScope()
         var apps by remember { mutableStateOf<List<AppItem>>(emptyList()) }
-        var verAjustes by remember { mutableStateOf(false) }
+        var pantalla by remember { mutableStateOf(0) }
         var busqueda by remember { mutableStateOf("") }
         val filtradas = remember(apps, busqueda) {
             if (busqueda.isBlank()) apps
             else apps.filter { it.label.contains(busqueda, ignoreCase = true) }
         }
 
-        // Entradas para la lista alfabética: encabezado de letra + apps
         val entradas = remember(filtradas) {
             val lista = mutableListOf<Entrada>()
             var ultima = ""
@@ -180,10 +190,32 @@ class MainActivity : ComponentActivity() {
         val colorBase = coloresFondo[ajustes.colorFondo.coerceIn(0, coloresFondo.size - 1)]
         val forma = formaIcono(ajustes.forma)
 
+        // Tipo de cajón: 0 Clásico, 1 One UI, 2 Pixel, 3 Inmersivo, 4 Flotante
+        val buscarArriba = ajustes.tipoCajon == 1 || ajustes.tipoCajon == 2
+        val recorte: Shape = when (ajustes.tipoCajon) {
+            4 -> RoundedCornerShape(28.dp)
+            2 -> RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            else -> RectangleShape
+        }
+        val margen: Modifier = if (ajustes.tipoCajon == 4)
+            Modifier.padding(start = 14.dp, end = 14.dp, top = 70.dp, bottom = 20.dp)
+        else Modifier
+        val opacidadCajon = if (ajustes.tipoCajon == 1) 1f else ajustes.transparenciaCajon
+
         LaunchedEffect(Unit) { apps = loadApps() }
         LaunchedEffect(cajonAbierto) { if (!cajonAbierto) busqueda = "" }
-        BackHandler(enabled = verAjustes) { verAjustes = false }
-        BackHandler(enabled = cajonAbierto && !verAjustes) { cerrar() }
+        LaunchedEffect(cajonAbierto, ajustes.tipoCajon) {
+            val ctrl = WindowCompat.getInsetsController(window, window.decorView)
+            if (cajonAbierto && ajustes.tipoCajon == 3) {
+                ctrl.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                ctrl.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                ctrl.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        BackHandler(enabled = pantalla != 0) { pantalla = atrasDe(pantalla) }
+        BackHandler(enabled = cajonAbierto && pantalla == 0) { cerrar() }
 
         Box(
             modifier = Modifier
@@ -192,11 +224,12 @@ class MainActivity : ComponentActivity() {
                 .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
-            if (verAjustes) {
+            if (pantalla != 0) {
                 PantallaAjustes(
+                    pantalla = pantalla,
                     ajustes = ajustes,
                     onCambio = { nuevo -> scope.launch { store.guardar(nuevo) } },
-                    onCerrar = { verAjustes = false }
+                    onIr = { pantalla = it }
                 )
             } else {
                 Box(
@@ -246,35 +279,13 @@ class MainActivity : ComponentActivity() {
                         fontSize = 24.sp,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .clickable { verAjustes = true }
+                            .clickable { pantalla = 1 }
                             .padding(14.dp)
                     )
                 }
 
                 if (cajonAbierto) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .imePadding()
-                            .graphicsLayer {
-                                val p = progreso.value.coerceIn(0f, 1f)
-                                when (ajustes.animCajon) {
-                                    1 -> {
-                                        scaleX = 0.8f + 0.2f * p
-                                        scaleY = 0.8f + 0.2f * p
-                                        alpha = p
-                                    }
-                                    2 -> {
-                                        alpha = p
-                                    }
-                                    else -> {
-                                        translationY = (1f - progreso.value.coerceAtMost(1.05f)) * alturaPx
-                                        alpha = (p * 2f).coerceIn(0f, 1f)
-                                    }
-                                }
-                            }
-                            .background(colorBase.copy(alpha = ajustes.transparenciaCajon))
-                    ) {
+                    val manija: @Composable () -> Unit = {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -302,6 +313,8 @@ class MainActivity : ComponentActivity() {
                                     .padding(horizontal = 40.dp, vertical = 12.dp)
                             )
                         }
+                    }
+                    val barra: @Composable () -> Unit = {
                         BasicTextField(
                             value = busqueda,
                             onValueChange = { busqueda = it },
@@ -310,17 +323,55 @@ class MainActivity : ComponentActivity() {
                             cursorBrush = SolidColor(Color.White),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .clip(RoundedCornerShape(24.dp))
+                                .padding(horizontal = 16.dp, vertical = if (buscarArriba) 8.dp else 0.dp)
+                                .clip(RoundedCornerShape(if (ajustes.tipoCajon == 2) 30.dp else 24.dp))
                                 .background(Color(0x33FFFFFF))
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                .padding(horizontal = 18.dp, vertical = 13.dp),
                             decorationBox = { campo ->
                                 if (busqueda.isEmpty()) {
-                                    Text("Buscar apps…", color = Color(0x99FFFFFF), fontSize = 16.sp)
+                                    Text(
+                                        if (ajustes.tipoCajon == 2) "Buscar en el teléfono" else "Buscar apps…",
+                                        color = Color(0x99FFFFFF),
+                                        fontSize = 16.sp
+                                    )
                                 }
                                 campo()
                             }
                         )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .imePadding()
+                            .graphicsLayer {
+                                val p = progreso.value.coerceIn(0f, 1f)
+                                when (ajustes.animCajon) {
+                                    1 -> {
+                                        scaleX = 0.8f + 0.2f * p
+                                        scaleY = 0.8f + 0.2f * p
+                                        alpha = p
+                                    }
+                                    2 -> {
+                                        alpha = p
+                                    }
+                                    else -> {
+                                        translationY = (1f - progreso.value.coerceAtMost(1.05f)) * alturaPx
+                                        alpha = (p * 2f).coerceIn(0f, 1f)
+                                    }
+                                }
+                            }
+                            .then(margen)
+                            .clip(recorte)
+                            .background(colorBase.copy(alpha = opacidadCajon))
+                    ) {
+                        if (buscarArriba) {
+                            barra()
+                            manija()
+                        } else {
+                            manija()
+                            barra()
+                        }
 
                         val alAbrir: (AppItem) -> Unit = { app ->
                             scope.launch { progreso.snapTo(0f) }
@@ -412,174 +463,186 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
 
-    @Composable
-    fun PantallaAjustes(
-        ajustes: Ajustes,
-        onCambio: (Ajustes) -> Unit,
-        onCerrar: () -> Unit
+@Composable
+fun Selector(
+    titulo: String,
+    opciones: List<String>,
+    actual: Int,
+    onElegir: (Int) -> Unit
+) {
+    Spacer(Modifier.height(14.dp))
+    Text(titulo, color = Color.White)
+    Spacer(Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        var columnas by remember { mutableStateOf(ajustes.columnas.toFloat()) }
-        var tamano by remember { mutableStateOf(ajustes.tamanoIcono.toFloat()) }
-        var fondo by remember { mutableStateOf(ajustes.fondoOscuro) }
-        var espaciado by remember { mutableStateOf(ajustes.espaciado.toFloat()) }
-        var transp by remember { mutableStateOf(ajustes.transparenciaCajon) }
+        opciones.forEachIndexed { i, nombre ->
+            Text(
+                text = nombre,
+                color = if (actual == i) Color(0xFFFBBF24) else Color.White,
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .clickable { onElegir(i) }
+                    .padding(vertical = 8.dp)
+            )
+        }
+    }
+}
 
-        Column(
+@Composable
+fun ItemMenu(texto: String, onClick: () -> Unit) {
+    Text(
+        text = "$texto  ›",
+        color = Color.White,
+        fontSize = 18.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 16.dp)
+    )
+}
+
+@Composable
+fun PantallaAjustes(
+    pantalla: Int,
+    ajustes: Ajustes,
+    onCambio: (Ajustes) -> Unit,
+    onIr: (Int) -> Unit
+) {
+    var columnas by remember { mutableStateOf(ajustes.columnas.toFloat()) }
+    var tamano by remember { mutableStateOf(ajustes.tamanoIcono.toFloat()) }
+    var fondo by remember { mutableStateOf(ajustes.fondoOscuro) }
+    var espaciado by remember { mutableStateOf(ajustes.espaciado.toFloat()) }
+    var transp by remember { mutableStateOf(ajustes.transparenciaCajon) }
+
+    val titulo = when (pantalla) {
+        1 -> "Ajustes"
+        2 -> "Apariencia"
+        3 -> "Cajón de aplicaciones"
+        else -> "Animaciones"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+    ) {
+        Text(
+            text = "← $titulo",
+            color = Color.White,
+            fontSize = 22.sp,
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp)
-        ) {
-            Text(
-                text = "← Ajustes",
-                color = Color.White,
-                fontSize = 22.sp,
-                modifier = Modifier.clickable { onCerrar() }.padding(vertical = 8.dp)
-            )
-            Spacer(Modifier.height(16.dp))
+                .clickable { onIr(atrasDe(pantalla)) }
+                .padding(vertical = 8.dp)
+        )
+        Spacer(Modifier.height(8.dp))
 
-            Text("Estilo del cajón", color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                listOf("Cuadrícula", "Compacta", "Grande", "Lista", "A-Z").forEachIndexed { i, nombre ->
-                    Text(
-                        text = nombre,
-                        color = if (ajustes.estiloCajon == i) Color(0xFFFBBF24) else Color.White,
-                        fontSize = 15.sp,
-                        modifier = Modifier
-                            .clickable { onCambio(ajustes.copy(estiloCajon = i)) }
-                            .padding(vertical = 8.dp)
+        when (pantalla) {
+            1 -> {
+                ItemMenu("Apariencia") { onIr(2) }
+                ItemMenu("Animaciones") { onIr(4) }
+            }
+            2 -> {
+                Selector("Forma de iconos", listOf("Original", "Círculo", "Redondeado", "Cuadrado"), ajustes.forma) {
+                    onCambio(ajustes.copy(forma = it))
+                }
+                Selector("Color de fondo", nombresColor, ajustes.colorFondo) {
+                    onCambio(ajustes.copy(colorFondo = it))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Opacidad del fondo: ${(fondo * 100).toInt()}%", color = Color.White)
+                Slider(
+                    value = fondo,
+                    onValueChange = { fondo = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(fondoOscuro = fondo)) },
+                    valueRange = 0f..0.9f
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mostrar nombres", color = Color.White, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = ajustes.mostrarNombres,
+                        onCheckedChange = { onCambio(ajustes.copy(mostrarNombres = it)) }
                     )
                 }
+                Spacer(Modifier.height(8.dp))
+                ItemMenu("Cajón de aplicaciones") { onIr(3) }
             }
-            Text(
-                "A-Z agrega letras separadoras e índice lateral.",
-                color = Color(0x99FFFFFF),
-                fontSize = 12.sp
-            )
+            3 -> {
+                Selector(
+                    "Tipo de cajón",
+                    listOf("Clásico", "One UI", "Pixel", "Inmersivo", "Flotante"),
+                    ajustes.tipoCajon
+                ) { onCambio(ajustes.copy(tipoCajon = it)) }
+                Text(
+                    when (ajustes.tipoCajon) {
+                        1 -> "Buscador arriba y fondo sólido."
+                        2 -> "Buscador redondeado arriba y esquinas curvas."
+                        3 -> "Oculta las barras del sistema mientras está abierto."
+                        4 -> "Panel con márgenes sobre la pantalla de inicio."
+                        else -> "Buscador debajo del control de cerrar."
+                    },
+                    color = Color(0x99FFFFFF),
+                    fontSize = 12.sp
+                )
+                Selector(
+                    "Estilo de las apps",
+                    listOf("Cuadrícula", "Compacta", "Grande", "Lista", "A-Z"),
+                    ajustes.estiloCajon
+                ) { onCambio(ajustes.copy(estiloCajon = it)) }
+                Text(
+                    "A-Z agrega letras separadoras e índice lateral.",
+                    color = Color(0x99FFFFFF),
+                    fontSize = 12.sp
+                )
 
-            Spacer(Modifier.height(16.dp))
-            Text("Forma de iconos", color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                listOf("Original", "Círculo", "Redondeado", "Cuadrado").forEachIndexed { i, nombre ->
-                    Text(
-                        text = nombre,
-                        color = if (ajustes.forma == i) Color(0xFFFBBF24) else Color.White,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .clickable { onCambio(ajustes.copy(forma = i)) }
-                            .padding(vertical = 8.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Text("Color de fondo", color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                nombresColor.forEachIndexed { i, nombre ->
-                    Text(
-                        text = nombre,
-                        color = if (ajustes.colorFondo == i) Color(0xFFFBBF24) else Color.White,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .clickable { onCambio(ajustes.copy(colorFondo = i)) }
-                            .padding(vertical = 8.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            Text("Columnas: ${columnas.toInt()}", color = Color.White)
-            Slider(
-                value = columnas,
-                onValueChange = { columnas = it },
-                onValueChangeFinished = { onCambio(ajustes.copy(columnas = columnas.toInt())) },
-                valueRange = 3f..6f,
-                steps = 2
-            )
-
-            Text("Tamaño de iconos: ${tamano.toInt()}", color = Color.White)
-            Slider(
-                value = tamano,
-                onValueChange = { tamano = it },
-                onValueChangeFinished = { onCambio(ajustes.copy(tamanoIcono = tamano.toInt())) },
-                valueRange = 36f..72f
-            )
-
-            Text("Espaciado entre apps: ${espaciado.toInt()}", color = Color.White)
-            Slider(
-                value = espaciado,
-                onValueChange = { espaciado = it },
-                onValueChangeFinished = { onCambio(ajustes.copy(espaciado = espaciado.toInt())) },
-                valueRange = 0f..24f
-            )
-
-            Text("Opacidad del fondo: ${(fondo * 100).toInt()}%", color = Color.White)
-            Slider(
-                value = fondo,
-                onValueChange = { fondo = it },
-                onValueChangeFinished = { onCambio(ajustes.copy(fondoOscuro = fondo)) },
-                valueRange = 0f..0.9f
-            )
-
-            Text("Transparencia del cajón: ${(transp * 100).toInt()}%", color = Color.White)
-            Slider(
-                value = transp,
-                onValueChange = { transp = it },
-                onValueChangeFinished = { onCambio(ajustes.copy(transparenciaCajon = transp)) },
-                valueRange = 0.3f..1f
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Mostrar nombres", color = Color.White, modifier = Modifier.weight(1f))
-                Switch(
-                    checked = ajustes.mostrarNombres,
-                    onCheckedChange = { onCambio(ajustes.copy(mostrarNombres = it)) }
+                Spacer(Modifier.height(14.dp))
+                Text("Columnas: ${columnas.toInt()}", color = Color.White)
+                Slider(
+                    value = columnas,
+                    onValueChange = { columnas = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(columnas = columnas.toInt())) },
+                    valueRange = 3f..6f,
+                    steps = 2
+                )
+                Text("Tamaño de iconos: ${tamano.toInt()}", color = Color.White)
+                Slider(
+                    value = tamano,
+                    onValueChange = { tamano = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(tamanoIcono = tamano.toInt())) },
+                    valueRange = 36f..72f
+                )
+                Text("Espaciado entre apps: ${espaciado.toInt()}", color = Color.White)
+                Slider(
+                    value = espaciado,
+                    onValueChange = { espaciado = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(espaciado = espaciado.toInt())) },
+                    valueRange = 0f..24f
+                )
+                Text("Transparencia del cajón: ${(transp * 100).toInt()}%", color = Color.White)
+                Slider(
+                    value = transp,
+                    onValueChange = { transp = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(transparenciaCajon = transp)) },
+                    valueRange = 0.3f..1f
                 )
             }
-
-            Spacer(Modifier.height(16.dp))
-            Text("Animación al abrir apps", color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                listOf("Ninguna", "Zoom", "Fade", "Deslizar").forEachIndexed { i, nombre ->
-                    Text(
-                        text = nombre,
-                        color = if (ajustes.animacion == i) Color(0xFFFBBF24) else Color.White,
-                        fontSize = 15.sp,
-                        modifier = Modifier
-                            .clickable { onCambio(ajustes.copy(animacion = i)) }
-                            .padding(vertical = 8.dp)
-                    )
+            else -> {
+                Selector("Animación al abrir apps", listOf("Ninguna", "Zoom", "Fade", "Deslizar"), ajustes.animacion) {
+                    onCambio(ajustes.copy(animacion = it))
+                }
+                Selector("Animación del cajón", listOf("Deslizar", "Zoom", "Fade", "Rebote"), ajustes.animCajon) {
+                    onCambio(ajustes.copy(animCajon = it))
                 }
             }
-
-            Spacer(Modifier.height(16.dp))
-            Text("Animación del cajón de apps", color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                listOf("Deslizar", "Zoom", "Fade", "Rebote").forEachIndexed { i, nombre ->
-                    Text(
-                        text = nombre,
-                        color = if (ajustes.animCajon == i) Color(0xFFFBBF24) else Color.White,
-                        fontSize = 15.sp,
-                        modifier = Modifier
-                            .clickable { onCambio(ajustes.copy(animCajon = i)) }
-                            .padding(vertical = 8.dp)
-                    )
-                }
-            }
-            Spacer(Modifier.height(24.dp))
         }
+        Spacer(Modifier.height(24.dp))
     }
 }
 

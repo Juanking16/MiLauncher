@@ -19,7 +19,8 @@ data class Ajustes(
     val forma: Int = 0,
     val espaciado: Int = 10,
     val transparenciaCajon: Float = 0.85f,
-    val colorFondo: Int = 0
+    val colorFondo: Int = 0,
+    val tipoCajon: Int = 0
 )
 
 class SettingsStore(private val context: Context) {
@@ -34,6 +35,7 @@ class SettingsStore(private val context: Context) {
     private val kEspaciado = intPreferencesKey("espaciado")
     private val kTransp = floatPreferencesKey("transparencia_cajon")
     private val kColor = intPreferencesKey("color_fondo")
+    private val kTipo = intPreferencesKey("tipo_cajon")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
@@ -47,7 +49,8 @@ class SettingsStore(private val context: Context) {
             forma = p[kForma] ?: 0,
             espaciado = p[kEspaciado] ?: 10,
             transparenciaCajon = p[kTransp] ?: 0.85f,
-            colorFondo = p[kColor] ?: 0
+            colorFondo = p[kColor] ?: 0,
+            tipoCajon = p[kTipo] ?: 0
         )
     }
 
@@ -64,6 +67,7 @@ class SettingsStore(private val context: Context) {
             p[kEspaciado] = a.espaciado
             p[kTransp] = a.transparenciaCajon
             p[kColor] = a.colorFondo
+            p[kTipo] = a.tipoCajon
         }
     }
 }
