@@ -14,13 +14,8 @@ data class Ajustes(
     val fondoOscuro: Float = 0.2f,
     val mostrarNombres: Boolean = true,
     val animacion: Int = 4,
-    val animCajon: Int = 0,
-    val estiloCajon: Int = 0,
     val forma: Int = 0,
-    val espaciado: Int = 10,
-    val transparenciaCajon: Float = 0.85f,
     val colorFondo: Int = 0,
-    val tipoCajon: Int = 1,
     val mostrarReloj: Boolean = true,
     val relojFormato24: Boolean = true,
     val relojFecha: Boolean = true,
@@ -30,7 +25,11 @@ data class Ajustes(
     val relojColor: Int = 0xFFFFFFFF.toInt(),
     val relojPosicion: Int = 0,
     val relojSombra: Boolean = true,
-    val transPagina: Int = 1
+    val transPagina: Int = 1,
+    val iconPack: String = "",
+    val packsVistos: String? = null,
+    val inicioPkgs: String? = null,
+    val dockPkgs: String? = null
 )
 
 class SettingsStore(private val context: Context) {
@@ -39,13 +38,8 @@ class SettingsStore(private val context: Context) {
     private val kFondo = floatPreferencesKey("fondo_oscuro")
     private val kNombres = booleanPreferencesKey("mostrar_nombres")
     private val kAnim = intPreferencesKey("anim_apertura")
-    private val kAnimCajon = intPreferencesKey("anim_cajon")
-    private val kEstilo = intPreferencesKey("estilo_cajon")
     private val kForma = intPreferencesKey("forma")
-    private val kEspaciado = intPreferencesKey("espaciado")
-    private val kTransp = floatPreferencesKey("transparencia_cajon")
     private val kColor = intPreferencesKey("color_fondo")
-    private val kTipo = intPreferencesKey("tipo_cajon")
     private val kReloj = booleanPreferencesKey("mostrar_reloj")
     private val kRelojFormato = booleanPreferencesKey("reloj_formato24")
     private val kRelojFecha = booleanPreferencesKey("reloj_fecha")
@@ -56,6 +50,10 @@ class SettingsStore(private val context: Context) {
     private val kRelojPos = intPreferencesKey("reloj_posicion")
     private val kRelojSombra = booleanPreferencesKey("reloj_sombra")
     private val kTransPagina = intPreferencesKey("trans_pagina")
+    private val kIconPack = stringPreferencesKey("icon_pack")
+    private val kVistos = stringPreferencesKey("packs_vistos")
+    private val kInicio = stringPreferencesKey("inicio_pkgs")
+    private val kDock = stringPreferencesKey("dock_pkgs")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
@@ -64,13 +62,8 @@ class SettingsStore(private val context: Context) {
             fondoOscuro = p[kFondo] ?: 0.2f,
             mostrarNombres = p[kNombres] ?: true,
             animacion = p[kAnim] ?: 4,
-            animCajon = p[kAnimCajon] ?: 0,
-            estiloCajon = p[kEstilo] ?: 0,
             forma = p[kForma] ?: 0,
-            espaciado = p[kEspaciado] ?: 10,
-            transparenciaCajon = p[kTransp] ?: 0.85f,
             colorFondo = p[kColor] ?: 0,
-            tipoCajon = p[kTipo] ?: 1,
             mostrarReloj = p[kReloj] ?: true,
             relojFormato24 = p[kRelojFormato] ?: true,
             relojFecha = p[kRelojFecha] ?: true,
@@ -80,24 +73,29 @@ class SettingsStore(private val context: Context) {
             relojColor = p[kRelojColor] ?: 0xFFFFFFFF.toInt(),
             relojPosicion = p[kRelojPos] ?: 0,
             relojSombra = p[kRelojSombra] ?: true,
-            transPagina = p[kTransPagina] ?: 1
+            transPagina = p[kTransPagina] ?: 1,
+            iconPack = p[kIconPack] ?: "",
+            packsVistos = p[kVistos],
+            inicioPkgs = p[kInicio],
+            dockPkgs = p[kDock]
         )
     }
 
     suspend fun guardar(a: Ajustes) {
         context.dataStore.edit { p ->
+            val vistos = a.packsVistos
+            if (vistos != null) p[kVistos] = vistos else p.remove(kVistos)
+            val inicio = a.inicioPkgs
+            if (inicio != null) p[kInicio] = inicio else p.remove(kInicio)
+            val dock = a.dockPkgs
+            if (dock != null) p[kDock] = dock else p.remove(kDock)
             p[kColumnas] = a.columnas
             p[kTamano] = a.tamanoIcono
             p[kFondo] = a.fondoOscuro
             p[kNombres] = a.mostrarNombres
             p[kAnim] = a.animacion
-            p[kAnimCajon] = a.animCajon
-            p[kEstilo] = a.estiloCajon
             p[kForma] = a.forma
-            p[kEspaciado] = a.espaciado
-            p[kTransp] = a.transparenciaCajon
             p[kColor] = a.colorFondo
-            p[kTipo] = a.tipoCajon
             p[kReloj] = a.mostrarReloj
             p[kRelojFormato] = a.relojFormato24
             p[kRelojFecha] = a.relojFecha
@@ -108,6 +106,7 @@ class SettingsStore(private val context: Context) {
             p[kRelojPos] = a.relojPosicion
             p[kRelojSombra] = a.relojSombra
             p[kTransPagina] = a.transPagina
+            p[kIconPack] = a.iconPack
         }
     }
 }

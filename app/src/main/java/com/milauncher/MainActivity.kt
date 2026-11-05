@@ -3,36 +3,28 @@ package com.milauncher
 import android.app.ActivityOptions
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationSpec
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -48,16 +40,15 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -65,9 +56,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -81,12 +69,15 @@ data class AppItem(
     val label: String,
     val packageName: String,
     val activityName: String,
-    val icon: ImageBitmap
+    val icon: ImageBitmap,
+    val sistema: Boolean = false
 )
 
-data class Entrada(val letra: String, val app: AppItem?)
-
 data class Atajo(val etiqueta: String, val icono: ImageBitmap, val accion: (Rect) -> Unit)
+
+data class Elemento(val atajo: Atajo, val app: AppItem?)
+
+data class Opcion(val texto: String, val peligro: Boolean = false, val accion: () -> Unit)
 
 // Guarda la posición de un icono en pantalla sin provocar recomposiciones
 class Caja { var r: Rect = Rect.Zero }
@@ -174,9 +165,8 @@ fun Modifier.efectoPagina(estado: PagerState, pagina: Int, estilo: Int): Modifie
         }
     }
 
-// Pantallas de ajustes: 0 cerrado, 1 menú, 2 Apariencia, 3 Cajón, 4 Animaciones, 5 Reloj
+// Pantallas de ajustes: 0 cerrado, 1 menú, 2 Apariencia, 4 Animaciones, 5 Reloj
 fun atrasDe(p: Int): Int = when (p) {
-    3 -> 2
     5 -> 2
     2 -> 1
     4 -> 1
@@ -184,9 +174,24 @@ fun atrasDe(p: Int): Int = when (p) {
 }
 
 class MainActivity : ComponentActivity() {
+    private var resumeTick by mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { HomeScreen() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumeTick++
+    }
+
+    private fun clavesApps(): Set<String> {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(intent, 0)
+            .filter { it.activityInfo.packageName != packageName }
+            .map { it.activityInfo.packageName + "/" + it.activityInfo.name }
+            .toSet()
     }
 
     private suspend fun loadApps(): List<AppItem> = withContext(Dispatchers.Default) {
@@ -194,15 +199,24 @@ class MainActivity : ComponentActivity() {
         packageManager.queryIntentActivities(intent, 0)
             .filter { it.activityInfo.packageName != packageName }
             .map {
+                val flags = it.activityInfo.applicationInfo.flags
+                val esSistema = (flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+                    (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
                 AppItem(
                     label = it.loadLabel(packageManager).toString(),
                     packageName = it.activityInfo.packageName,
                     activityName = it.activityInfo.name,
-                    icon = it.loadIcon(packageManager).toBitmap(128, 128).asImageBitmap()
+                    icon = it.loadIcon(packageManager).toBitmap(128, 128).asImageBitmap(),
+                    sistema = esSistema
                 )
             }
             .sortedBy { it.label.lowercase() }
     }
+
+    private suspend fun aplicarPack(base: List<AppItem>, pack: String): List<AppItem> =
+        withContext(Dispatchers.Default) {
+            IconPacks(applicationContext).aplicar(base, pack)
+        }
 
     private fun openApp(app: AppItem, estilo: Int, origen: Rect? = null) {
         val intent = Intent(Intent.ACTION_MAIN).apply {
@@ -230,50 +244,125 @@ class MainActivity : ComponentActivity() {
         startActivity(intent, opciones?.toBundle())
     }
 
+    private fun desinstalar(app: AppItem) {
+        try {
+            val i = Intent(Intent.ACTION_DELETE, Uri.parse("package:" + app.packageName))
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No se pudo abrir el desinstalador", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun infoApp(app: AppItem) {
+        try {
+            val i = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + app.packageName)
+            )
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No se pudo abrir la información", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun buscarPacks() {
+        try {
+            val i = Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=icon%20pack&c=apps"))
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+        } catch (e: Exception) {
+            try {
+                val i = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://play.google.com/store/search?q=icon%20pack&c=apps")
+                )
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
+            } catch (e2: Exception) {
+                Toast.makeText(this, "No se pudo abrir la tienda", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     @Composable
     fun HomeScreen() {
         val store = remember { SettingsStore(applicationContext) }
-        val ajustes by store.flow.collectAsState(initial = Ajustes())
+        val ajustesCarga by store.flow.collectAsState(initial = null)
+        val cargado = ajustesCarga != null
+        val ajustes = ajustesCarga ?: Ajustes()
         val scope = rememberCoroutineScope()
+
+        var appsBase by remember { mutableStateOf<List<AppItem>>(emptyList()) }
         var apps by remember { mutableStateOf<List<AppItem>>(emptyList()) }
+        var packs by remember { mutableStateOf<List<PaqueteIconos>>(emptyList()) }
         var pantalla by remember { mutableStateOf(0) }
-        var busqueda by remember { mutableStateOf("") }
-        val filtradas = remember(apps, busqueda) {
-            if (busqueda.isBlank()) apps
-            else apps.filter { it.label.contains(busqueda, ignoreCase = true) }
+        var menuApp by remember { mutableStateOf<AppItem?>(null) }
+        var packNuevo by remember { mutableStateOf<PaqueteIconos?>(null) }
+
+        // Lista de apps: se recarga solo si se instaló o desinstaló algo
+        LaunchedEffect(resumeTick) {
+            val nuevas = withContext(Dispatchers.Default) { clavesApps() }
+            val actuales = appsBase.map { it.packageName + "/" + it.activityName }.toSet()
+            if (nuevas != actuales) appsBase = loadApps()
         }
 
-        val entradas = remember(filtradas) {
-            val lista = mutableListOf<Entrada>()
-            var ultima = ""
-            filtradas.forEach { app ->
-                val primera = app.label.firstOrNull()?.uppercaseChar()
-                val letra = if (primera != null && primera.isLetter()) primera.toString() else "#"
-                if (letra != ultima) {
-                    lista.add(Entrada(letra, null))
-                    ultima = letra
-                }
-                lista.add(Entrada(letra, app))
+        // Aplica el paquete de iconos elegido
+        LaunchedEffect(appsBase, ajustes.iconPack, cargado) {
+            if (cargado) {
+                apps = if (ajustes.iconPack.isBlank()) appsBase
+                else aplicarPack(appsBase, ajustes.iconPack)
             }
-            lista
         }
-        val letras = remember(entradas) { entradas.filter { it.app == null }.map { it.letra } }
-        val listaEstado = rememberLazyListState()
 
-        val dockApps = remember(apps) {
+        // Detecta paquetes de iconos y avisa si hay uno nuevo
+        LaunchedEffect(resumeTick, cargado) {
+            if (cargado) {
+                val detectados = withContext(Dispatchers.Default) {
+                    IconPacks(applicationContext).detectar()
+                }
+                packs = detectados
+                val vistos = ajustes.packsVistos
+                if (vistos == null) {
+                    store.guardar(
+                        ajustes.copy(packsVistos = detectados.joinToString(",") { it.paquete })
+                    )
+                } else {
+                    val conocidos = vistos.split(",").filter { it.isNotBlank() }
+                    val nuevo = detectados.firstOrNull { it.paquete !in conocidos }
+                    if (nuevo != null && packNuevo == null) packNuevo = nuevo
+                }
+            }
+        }
+
+        // Atajos del inicio y del dock (automáticos hasta que los cambies)
+        val dockAuto = remember(apps) {
             dockClaves.mapNotNull { buscarApp(apps, it) }.distinctBy { it.packageName }
         }
-        val inicioApps = remember(apps) {
-            inicioClaves.mapNotNull { buscarApp(apps, it) }
-                .distinctBy { it.packageName }
-                .filter { a -> dockApps.none { d -> d.packageName == a.packageName } }
-                .take(7)
+        val dockCfg = ajustes.dockPkgs
+        val inicioCfg = ajustes.inicioPkgs
+        val dockApps = remember(apps, dockCfg) {
+            if (dockCfg == null) dockAuto
+            else dockCfg.split(",").filter { it.isNotBlank() }
+                .mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
+        }
+        val inicioApps = remember(apps, inicioCfg, dockApps) {
+            if (inicioCfg == null) {
+                inicioClaves.mapNotNull { buscarApp(apps, it) }
+                    .distinctBy { it.packageName }
+                    .filter { a -> dockApps.none { d -> d.packageName == a.packageName } }
+                    .take(7)
+            } else {
+                inicioCfg.split(",").filter { it.isNotBlank() }
+                    .mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
+            }
         }
         val iconoPropio = remember {
             packageManager.getApplicationIcon(packageName).toBitmap(128, 128).asImageBitmap()
         }
 
-        // Páginas del inicio: la 0 es el inicio y las demás tienen todas las apps
+        // Páginas: la 0 es el inicio y las demás tienen todas las apps
         val columnasPagina = ajustes.columnas.coerceAtLeast(3)
         val filasPagina = 5
         val porPagina = columnasPagina * filasPagina
@@ -281,49 +370,8 @@ class MainActivity : ComponentActivity() {
         val totalPaginas = 1 + paginasApps
         val pagerState = rememberPagerState(pageCount = { totalPaginas })
 
-        val progreso = remember { Animatable(0f) }
-        val cajonAbierto = progreso.value > 0.01f
-        val alturaPx = with(LocalDensity.current) {
-            LocalConfiguration.current.screenHeightDp.dp.toPx()
-        }
-        val spec: AnimationSpec<Float> = if (ajustes.animCajon == 3)
-            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
-        else tween(300)
-
-        fun cerrar() { scope.launch { progreso.animateTo(0f, tween(250)) } }
-        fun terminarArrastre() {
-            scope.launch {
-                if (progreso.value > 0.5f) progreso.animateTo(1f, spec)
-                else progreso.animateTo(0f, tween(250))
-            }
-        }
-
-        val columnasEstilo = when (ajustes.estiloCajon) {
-            1 -> (ajustes.columnas + 1).coerceAtMost(7)
-            2 -> 3
-            else -> ajustes.columnas
-        }
-        val tamanoEstilo = when (ajustes.estiloCajon) {
-            1 -> (ajustes.tamanoIcono * 0.8f).toInt()
-            2 -> 72
-            3, 4 -> 44
-            else -> ajustes.tamanoIcono
-        }
         val colorBase = coloresFondo[ajustes.colorFondo.coerceIn(0, coloresFondo.size - 1)]
         val forma = formaIcono(ajustes.forma)
-
-        val buscarArriba = ajustes.tipoCajon == 1 || ajustes.tipoCajon == 2
-        val recorte: Shape = when (ajustes.tipoCajon) {
-            4 -> RoundedCornerShape(28.dp)
-            2 -> RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-            else -> RectangleShape
-        }
-        val margen: Modifier = if (ajustes.tipoCajon == 4)
-            Modifier.padding(start = 14.dp, end = 14.dp, top = 70.dp, bottom = 20.dp)
-        else Modifier
-        val opacidadCajon = if (ajustes.tipoCajon == 1) 1f else ajustes.transparenciaCajon
-        val bloqueo = remember { MutableInteractionSource() }
-
         val alineacionReloj = when (ajustes.relojPosicion) {
             1 -> Alignment.TopCenter
             2 -> Alignment.TopEnd
@@ -331,29 +379,73 @@ class MainActivity : ComponentActivity() {
             else -> Alignment.TopStart
         }
 
-        val atajosInicio = listOf(
-            Atajo("Juan Launcher", iconoPropio) { pantalla = 1 }
-        ) + inicioApps.map { app ->
-            Atajo(app.label, app.icon) { r -> openApp(app, ajustes.animacion, r) }
+        // Acciones del menú de mantener pulsado
+        fun aviso(texto: String) {
+            Toast.makeText(applicationContext, texto, Toast.LENGTH_SHORT).show()
         }
 
-        LaunchedEffect(Unit) { apps = loadApps() }
-        LaunchedEffect(cajonAbierto) { if (!cajonAbierto) busqueda = "" }
-        LaunchedEffect(cajonAbierto, ajustes.tipoCajon) {
-            val ctrl = WindowCompat.getInsetsController(window, window.decorView)
-            if (cajonAbierto && ajustes.tipoCajon == 3) {
-                ctrl.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                ctrl.hide(WindowInsetsCompat.Type.systemBars())
-            } else {
-                ctrl.show(WindowInsetsCompat.Type.systemBars())
+        fun guardarListas(inicio: List<AppItem>, dock: List<AppItem>) {
+            scope.launch {
+                store.guardar(
+                    ajustes.copy(
+                        inicioPkgs = inicio.joinToString(",") { it.packageName },
+                        dockPkgs = dock.joinToString(",") { it.packageName }
+                    )
+                )
             }
         }
+
+        fun aInicio(app: AppItem) {
+            val yaEsta = inicioApps.any { it.packageName == app.packageName }
+            if (!yaEsta && inicioApps.size >= 11) {
+                aviso("El inicio está lleno")
+                return
+            }
+            guardarListas(
+                inicioApps.filter { it.packageName != app.packageName } + app,
+                dockApps.filter { it.packageName != app.packageName }
+            )
+        }
+
+        fun aDock(app: AppItem) {
+            val yaEsta = dockApps.any { it.packageName == app.packageName }
+            if (!yaEsta && dockApps.size >= 5) {
+                aviso("El dock está lleno (máximo 5)")
+                return
+            }
+            guardarListas(
+                inicioApps.filter { it.packageName != app.packageName },
+                dockApps.filter { it.packageName != app.packageName } + app
+            )
+        }
+
+        fun quitar(app: AppItem) {
+            guardarListas(
+                inicioApps.filter { it.packageName != app.packageName },
+                dockApps.filter { it.packageName != app.packageName }
+            )
+        }
+
+        fun mantener(app: AppItem?): (() -> Unit)? {
+            if (app == null) return null
+            return { menuApp = app }
+        }
+
+        fun resolverPack(p: PaqueteIconos, aplicar: Boolean) {
+            val vistos = (ajustes.packsVistos ?: "").split(",").filter { it.isNotBlank() }
+            val todos = (vistos + p.paquete).distinct().joinToString(",")
+            scope.launch {
+                if (aplicar) store.guardar(ajustes.copy(iconPack = p.paquete, packsVistos = todos))
+                else store.guardar(ajustes.copy(packsVistos = todos))
+            }
+            packNuevo = null
+        }
+
         BackHandler(enabled = pantalla != 0) { pantalla = atrasDe(pantalla) }
-        BackHandler(enabled = cajonAbierto && pantalla == 0) { cerrar() }
-        BackHandler(enabled = !cajonAbierto && pantalla == 0 && pagerState.currentPage != 0) {
+        BackHandler(enabled = pantalla == 0 && pagerState.currentPage != 0) {
             scope.launch { pagerState.animateScrollToPage(0) }
         }
+        BackHandler(enabled = menuApp != null) { menuApp = null }
 
         Box(
             modifier = Modifier
@@ -366,311 +458,269 @@ class MainActivity : ComponentActivity() {
                 PantallaAjustes(
                     pantalla = pantalla,
                     ajustes = ajustes,
+                    packs = packs,
                     onCambio = { nuevo -> scope.launch { store.guardar(nuevo) } },
-                    onIr = { pantalla = it }
+                    onIr = { pantalla = it },
+                    onBuscarPacks = { buscarPacks() }
                 )
             } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .pointerInput(ajustes.animCajon) {
-                            detectVerticalDragGestures(
-                                onDragEnd = { terminarArrastre() },
-                                onDragCancel = { terminarArrastre() }
-                            ) { change, dy ->
-                                change.consume()
-                                scope.launch {
-                                    progreso.snapTo(
-                                        (progreso.value - dy / alturaPx * 2f).coerceIn(0f, 1f)
-                                    )
-                                }
-                            }
-                        }
-                ) {
-                    Column(
+                Column(modifier = Modifier.fillMaxSize()) {
+                    HorizontalPager(
+                        state = pagerState,
                         modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                val p = progreso.value.coerceIn(0f, 1f)
-                                alpha = 1f - p
-                                scaleX = 1f - 0.05f * p
-                                scaleY = 1f - 0.05f * p
-                            }
-                    ) {
-                        HorizontalPager(
-                            state = pagerState,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) { pagina ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .efectoPagina(pagerState, pagina, ajustes.transPagina)
-                            ) {
-                                if (pagina == 0) {
-                                    if (ajustes.mostrarReloj) {
-                                        Reloj(
-                                            ajustes = ajustes,
-                                            modifier = Modifier
-                                                .align(alineacionReloj)
-                                                .padding(horizontal = 28.dp, vertical = 36.dp)
-                                        )
-                                    }
-                                    Column(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp)
-                                    ) {
-                                        atajosInicio.chunked(4).forEach { fila ->
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(vertical = 6.dp)
-                                            ) {
-                                                fila.forEach { atajo ->
-                                                    IconoAtajo(
-                                                        atajo = atajo,
-                                                        tamano = 58,
-                                                        forma = forma,
-                                                        activo = !cajonAbierto,
-                                                        mostrarNombre = true,
-                                                        modifier = Modifier.weight(1f)
-                                                    )
-                                                }
-                                                repeat(4 - fila.size) { Spacer(Modifier.weight(1f)) }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    val desde = (pagina - 1) * porPagina
-                                    PaginaApps(
-                                        lista = apps.drop(desde).take(porPagina),
-                                        columnas = columnasPagina,
-                                        filas = filasPagina,
-                                        tamano = ajustes.tamanoIcono,
-                                        forma = forma,
-                                        mostrarNombre = ajustes.mostrarNombres,
-                                        activo = !cajonAbierto
-                                    ) { app, r -> openApp(app, ajustes.animacion, r) }
-                                }
-                            }
-                        }
-
-                        Puntos(total = totalPaginas, actual = pagerState.currentPage)
-
-                        if (dockApps.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp)
-                                    .clip(RoundedCornerShape(30.dp))
-                                    .background(Color(0x33FFFFFF))
-                                    .padding(vertical = 10.dp)
-                            ) {
-                                dockApps.forEach { app ->
-                                    IconoAtajo(
-                                        atajo = Atajo(app.label, app.icon) { r ->
-                                            openApp(app, ajustes.animacion, r)
-                                        },
-                                        tamano = 56,
-                                        forma = forma,
-                                        activo = !cajonAbierto,
-                                        mostrarNombre = false,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
-
-                if (cajonAbierto) {
-                    val manija: @Composable () -> Unit = {
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) { pagina ->
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .pointerInput(ajustes.animCajon) {
-                                    detectVerticalDragGestures(
-                                        onDragEnd = { terminarArrastre() },
-                                        onDragCancel = { terminarArrastre() }
-                                    ) { change, dy ->
-                                        change.consume()
-                                        scope.launch {
-                                            progreso.snapTo(
-                                                (progreso.value - dy / alturaPx * 2f).coerceIn(0f, 1f)
-                                            )
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
+                                .fillMaxSize()
+                                .efectoPagina(pagerState, pagina, ajustes.transPagina)
                         ) {
-                            Text(
-                                text = "⌄",
-                                color = Color.White,
-                                fontSize = 30.sp,
-                                modifier = Modifier
-                                    .clickable { cerrar() }
-                                    .padding(horizontal = 40.dp, vertical = 12.dp)
-                            )
-                        }
-                    }
-                    val barra: @Composable () -> Unit = {
-                        BasicTextField(
-                            value = busqueda,
-                            onValueChange = { busqueda = it },
-                            singleLine = true,
-                            textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
-                            cursorBrush = SolidColor(Color.White),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = if (buscarArriba) 8.dp else 0.dp)
-                                .clip(RoundedCornerShape(if (ajustes.tipoCajon == 2) 30.dp else 24.dp))
-                                .background(Color(0x33FFFFFF))
-                                .padding(horizontal = 18.dp, vertical = 13.dp),
-                            decorationBox = { campo ->
-                                if (busqueda.isEmpty()) {
-                                    Text(
-                                        if (ajustes.tipoCajon == 2) "Buscar en el teléfono" else "Buscar apps…",
-                                        color = Color(0x99FFFFFF),
-                                        fontSize = 16.sp
+                            if (pagina == 0) {
+                                if (ajustes.mostrarReloj) {
+                                    Reloj(
+                                        ajustes = ajustes,
+                                        modifier = Modifier
+                                            .align(alineacionReloj)
+                                            .padding(horizontal = 28.dp, vertical = 36.dp)
                                     )
                                 }
-                                campo()
-                            }
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .imePadding()
-                            .graphicsLayer {
-                                val p = progreso.value.coerceIn(0f, 1f)
-                                when (ajustes.animCajon) {
-                                    1 -> {
-                                        scaleX = 0.8f + 0.2f * p
-                                        scaleY = 0.8f + 0.2f * p
-                                        alpha = p
-                                    }
-                                    2 -> {
-                                        alpha = p
-                                    }
-                                    4 -> {
-                                        cameraDistance = 14f * density
-                                        transformOrigin = TransformOrigin(0.5f, 1f)
-                                        rotationX = (1f - p) * 35f
-                                        translationY = (1f - p) * alturaPx * 0.35f
-                                        alpha = p
-                                    }
-                                    else -> {
-                                        translationY = (1f - progreso.value.coerceAtMost(1.05f)) * alturaPx
-                                        alpha = (p * 2f).coerceIn(0f, 1f)
-                                    }
+                                val elementos = listOf(
+                                    Elemento(
+                                        Atajo("Juan Launcher", iconoPropio) { pantalla = 1 },
+                                        null
+                                    )
+                                ) + inicioApps.map { app ->
+                                    Elemento(
+                                        Atajo(app.label, app.icon) { r ->
+                                            openApp(app, ajustes.animacion, r)
+                                        },
+                                        app
+                                    )
                                 }
-                            }
-                            .then(margen)
-                            .clip(recorte)
-                            .background(colorBase.copy(alpha = opacidadCajon))
-                            .clickable(interactionSource = bloqueo, indication = null) { }
-                    ) {
-                        if (buscarArriba) {
-                            barra()
-                            manija()
-                        } else {
-                            manija()
-                            barra()
-                        }
-
-                        val alAbrir: (AppItem, Rect) -> Unit = { app, r ->
-                            scope.launch { progreso.snapTo(0f) }
-                            openApp(app, ajustes.animacion, r)
-                        }
-
-                        when (ajustes.estiloCajon) {
-                            3 -> {
-                                LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
-                                    itemsIndexed(filtradas) { indice, app ->
-                                        AppFila(app, indice, tamanoEstilo, forma, ajustes.espaciado) { r ->
-                                            alAbrir(app, r)
-                                        }
-                                    }
-                                }
-                            }
-                            4 -> {
-                                Row(modifier = Modifier.fillMaxSize()) {
-                                    LazyColumn(
-                                        state = listaEstado,
-                                        modifier = Modifier.weight(1f).padding(start = 8.dp)
-                                    ) {
-                                        itemsIndexed(entradas) { indice, entrada ->
-                                            val app = entrada.app
-                                            if (app == null) {
-                                                Text(
-                                                    text = entrada.letra,
-                                                    color = Color(0xFFFBBF24),
-                                                    fontSize = 14.sp,
-                                                    modifier = Modifier.padding(
-                                                        start = 16.dp, top = 14.dp, bottom = 4.dp
-                                                    )
-                                                )
-                                            } else {
-                                                AppFila(app, indice, tamanoEstilo, forma, ajustes.espaciado) { r ->
-                                                    alAbrir(app, r)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .width(28.dp)
-                                            .padding(vertical = 8.dp),
-                                        verticalArrangement = Arrangement.SpaceEvenly,
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        letras.forEach { letra ->
-                                            Text(
-                                                text = letra,
-                                                color = Color.White,
-                                                fontSize = 11.sp,
-                                                modifier = Modifier
-                                                    .clickable {
-                                                        val pos = entradas.indexOfFirst {
-                                                            it.app == null && it.letra == letra
-                                                        }
-                                                        if (pos >= 0) {
-                                                            scope.launch { listaEstado.scrollToItem(pos) }
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 6.dp, vertical = 1.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            else -> {
-                                LazyVerticalGrid(
-                                    columns = GridCells.Fixed(columnasEstilo),
-                                    modifier = Modifier.fillMaxSize().padding(8.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp)
                                 ) {
-                                    itemsIndexed(filtradas) { indice, app ->
-                                        AppCelda(
-                                            app = app,
-                                            indice = indice,
-                                            tamano = tamanoEstilo,
-                                            forma = forma,
-                                            espaciado = ajustes.espaciado,
-                                            mostrarNombre = ajustes.mostrarNombres
-                                        ) { r -> alAbrir(app, r) }
+                                    elementos.chunked(4).forEach { fila ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 6.dp)
+                                        ) {
+                                            fila.forEach { el ->
+                                                IconoAtajo(
+                                                    atajo = el.atajo,
+                                                    tamano = 58,
+                                                    forma = forma,
+                                                    mostrarNombre = true,
+                                                    modifier = Modifier.weight(1f),
+                                                    alMantener = mantener(el.app)
+                                                )
+                                            }
+                                            repeat(4 - fila.size) { Spacer(Modifier.weight(1f)) }
+                                        }
                                     }
                                 }
+                            } else {
+                                val desde = (pagina - 1) * porPagina
+                                PaginaApps(
+                                    lista = apps.drop(desde).take(porPagina),
+                                    columnas = columnasPagina,
+                                    filas = filasPagina,
+                                    tamano = ajustes.tamanoIcono,
+                                    forma = forma,
+                                    mostrarNombre = ajustes.mostrarNombres,
+                                    onAbrir = { app, r -> openApp(app, ajustes.animacion, r) },
+                                    onMantener = { app -> menuApp = app }
+                                )
                             }
                         }
                     }
+
+                    Puntos(total = totalPaginas, actual = pagerState.currentPage)
+
+                    if (dockApps.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .clip(RoundedCornerShape(30.dp))
+                                .background(Color(0x33FFFFFF))
+                                .padding(vertical = 10.dp)
+                        ) {
+                            dockApps.forEach { app ->
+                                IconoAtajo(
+                                    atajo = Atajo(app.label, app.icon) { r ->
+                                        openApp(app, ajustes.animacion, r)
+                                    },
+                                    tamano = 56,
+                                    forma = forma,
+                                    mostrarNombre = false,
+                                    modifier = Modifier.weight(1f),
+                                    alMantener = mantener(app)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                 }
+
+                // Menú al mantener pulsada una app
+                val sel = menuApp
+                if (sel != null) {
+                    val enInicio = inicioApps.any { it.packageName == sel.packageName }
+                    val enDock = dockApps.any { it.packageName == sel.packageName }
+                    val opciones = buildList<Opcion> {
+                        if (!enInicio) {
+                            add(Opcion(if (enDock) "Mover al inicio" else "Agregar al inicio") {
+                                aInicio(sel)
+                                menuApp = null
+                            })
+                        }
+                        if (!enDock) {
+                            add(Opcion(if (enInicio) "Mover al dock" else "Agregar al dock") {
+                                aDock(sel)
+                                menuApp = null
+                            })
+                        }
+                        if (enInicio || enDock) {
+                            add(Opcion(if (enDock) "Quitar del dock" else "Quitar del inicio") {
+                                quitar(sel)
+                                menuApp = null
+                            })
+                        }
+                        add(Opcion("Información de la app") {
+                            infoApp(sel)
+                            menuApp = null
+                        })
+                        if (!sel.sistema) {
+                            add(Opcion("Desinstalar", true) {
+                                desinstalar(sel)
+                                menuApp = null
+                            })
+                        }
+                    }
+                    MenuApp(app = sel, opciones = opciones, onCerrar = { menuApp = null })
+                }
+
+                // Aviso cuando se instala un paquete de iconos
+                val nuevoPack = packNuevo
+                if (nuevoPack != null && menuApp == null) {
+                    AvisoPack(
+                        nombre = nuevoPack.nombre,
+                        onAplicar = { resolverPack(nuevoPack, true) },
+                        onCerrar = { resolverPack(nuevoPack, false) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MenuApp(app: AppItem, opciones: List<Opcion>, onCerrar: () -> Unit) {
+    val fuenteFondo = remember { MutableInteractionSource() }
+    val fuenteTarjeta = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable(interactionSource = fuenteFondo, indication = null) { onCerrar() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 36.dp)
+                .widthIn(min = 260.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF1F1F24))
+                .clickable(interactionSource = fuenteTarjeta, indication = null) { }
+                .padding(vertical = 14.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            ) {
+                Image(
+                    bitmap = app.icon,
+                    contentDescription = app.label,
+                    modifier = Modifier.size(44.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                Text(
+                    text = app.label,
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            opciones.forEach { op ->
+                Text(
+                    text = op.texto,
+                    color = if (op.peligro) Color(0xFFFF6B6B) else Color.White,
+                    fontSize = 16.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { op.accion() }
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AvisoPack(nombre: String, onAplicar: () -> Unit, onCerrar: () -> Unit) {
+    val fuenteFondo = remember { MutableInteractionSource() }
+    val fuenteTarjeta = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable(interactionSource = fuenteFondo, indication = null) { },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 32.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF1F1F24))
+                .clickable(interactionSource = fuenteTarjeta, indication = null) { }
+                .padding(24.dp)
+        ) {
+            Text("Nuevo paquete de iconos", color = Color.White, fontSize = 19.sp)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Instalaste «" + nombre + "». ¿Quieres usarlo en Juan Launcher?",
+                color = Color(0xCCFFFFFF),
+                fontSize = 15.sp
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = "Ahora no",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    modifier = Modifier
+                        .clickable { onCerrar() }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                )
+                Text(
+                    text = "Aplicar",
+                    color = Color(0xFFFBBF24),
+                    fontSize = 16.sp,
+                    modifier = Modifier
+                        .clickable { onAplicar() }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                )
             }
         }
     }
@@ -684,8 +734,8 @@ fun PaginaApps(
     tamano: Int,
     forma: Shape,
     mostrarNombre: Boolean,
-    activo: Boolean,
-    onAbrir: (AppItem, Rect) -> Unit
+    onAbrir: (AppItem, Rect) -> Unit,
+    onMantener: (AppItem) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -711,9 +761,9 @@ fun PaginaApps(
                                 atajo = Atajo(app.label, app.icon) { r -> onAbrir(app, r) },
                                 tamano = tamano,
                                 forma = forma,
-                                activo = activo,
                                 mostrarNombre = mostrarNombre,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth(),
+                                alMantener = { onMantener(app) }
                             )
                         }
                     }
@@ -806,15 +856,29 @@ fun IconoAtajo(
     atajo: Atajo,
     tamano: Int,
     forma: Shape,
-    activo: Boolean,
     mostrarNombre: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    alMantener: (() -> Unit)? = null
 ) {
     val caja = remember { Caja() }
+    val haptic = LocalHapticFeedback.current
+    val accion by rememberUpdatedState(atajo.accion)
+    val mantener by rememberUpdatedState(alMantener)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
-            .clickable(enabled = activo) { atajo.accion(caja.r) }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { accion(caja.r) },
+                    onLongPress = {
+                        val m = mantener
+                        if (m != null) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            m()
+                        }
+                    }
+                )
+            }
             .padding(vertical = 4.dp)
     ) {
         Image(
@@ -910,20 +974,19 @@ fun ItemMenu(texto: String, onClick: () -> Unit) {
 fun PantallaAjustes(
     pantalla: Int,
     ajustes: Ajustes,
+    packs: List<PaqueteIconos>,
     onCambio: (Ajustes) -> Unit,
-    onIr: (Int) -> Unit
+    onIr: (Int) -> Unit,
+    onBuscarPacks: () -> Unit
 ) {
     var columnas by remember { mutableStateOf(ajustes.columnas.toFloat()) }
     var tamano by remember { mutableStateOf(ajustes.tamanoIcono.toFloat()) }
     var fondo by remember { mutableStateOf(ajustes.fondoOscuro) }
-    var espaciado by remember { mutableStateOf(ajustes.espaciado.toFloat()) }
-    var transp by remember { mutableStateOf(ajustes.transparenciaCajon) }
     var relojTam by remember { mutableStateOf(ajustes.relojTamano.toFloat()) }
 
     val titulo = when (pantalla) {
         1 -> "Ajustes"
         2 -> "Apariencia"
-        3 -> "Cajón de aplicaciones"
         5 -> "Reloj"
         else -> "Animaciones"
     }
@@ -951,7 +1014,25 @@ fun PantallaAjustes(
             }
             2 -> {
                 ItemMenu("Reloj") { onIr(5) }
-                ItemMenu("Cajón de aplicaciones") { onIr(3) }
+
+                val indicePack = packs.indexOfFirst { it.paquete == ajustes.iconPack }
+                    .let { if (it < 0) 0 else it + 1 }
+                Selector(
+                    "Paquete de iconos",
+                    listOf("Predeterminado") + packs.map { it.nombre },
+                    indicePack
+                ) { i ->
+                    onCambio(ajustes.copy(iconPack = if (i == 0) "" else packs[i - 1].paquete))
+                }
+                if (packs.isEmpty()) {
+                    Text(
+                        "No hay paquetes de iconos instalados.",
+                        color = Color(0x99FFFFFF),
+                        fontSize = 12.sp
+                    )
+                }
+                ItemMenu("Buscar paquetes en Play Store") { onBuscarPacks() }
+
                 Selector("Forma de iconos", listOf("Original", "Círculo", "Redondeado", "Cuadrado"), ajustes.forma) {
                     onCambio(ajustes.copy(forma = it))
                 }
@@ -1074,50 +1155,6 @@ fun PantallaAjustes(
                     valueRange = 0f..1f
                 )
             }
-            3 -> {
-                Selector(
-                    "Tipo de cajón",
-                    listOf("Clásico", "One UI", "Pixel", "Inmersivo", "Flotante"),
-                    ajustes.tipoCajon
-                ) { onCambio(ajustes.copy(tipoCajon = it)) }
-                Text(
-                    when (ajustes.tipoCajon) {
-                        1 -> "Buscador arriba y fondo sólido."
-                        2 -> "Buscador redondeado arriba y esquinas curvas."
-                        3 -> "Oculta las barras del sistema mientras está abierto."
-                        4 -> "Panel con márgenes sobre la pantalla de inicio."
-                        else -> "Buscador debajo del control de cerrar."
-                    },
-                    color = Color(0x99FFFFFF),
-                    fontSize = 12.sp
-                )
-                Selector(
-                    "Estilo de las apps",
-                    listOf("Cuadrícula", "Compacta", "Grande", "Lista", "A-Z"),
-                    ajustes.estiloCajon
-                ) { onCambio(ajustes.copy(estiloCajon = it)) }
-                Text(
-                    "A-Z agrega letras separadoras e índice lateral.",
-                    color = Color(0x99FFFFFF),
-                    fontSize = 12.sp
-                )
-
-                Spacer(Modifier.height(14.dp))
-                Text("Espaciado entre apps: ${espaciado.toInt()}", color = Color.White)
-                Slider(
-                    value = espaciado,
-                    onValueChange = { espaciado = it },
-                    onValueChangeFinished = { onCambio(ajustes.copy(espaciado = espaciado.toInt())) },
-                    valueRange = 0f..24f
-                )
-                Text("Transparencia del cajón: ${(transp * 100).toInt()}%", color = Color.White)
-                Slider(
-                    value = transp,
-                    onValueChange = { transp = it },
-                    onValueChangeFinished = { onCambio(ajustes.copy(transparenciaCajon = transp)) },
-                    valueRange = 0.3f..1f
-                )
-            }
             else -> {
                 Selector(
                     "Transición entre páginas",
@@ -1154,114 +1191,8 @@ fun PantallaAjustes(
                     color = Color(0x99FFFFFF),
                     fontSize = 12.sp
                 )
-                Selector(
-                    "Animación del cajón",
-                    listOf("Deslizar", "Zoom", "Fade", "Rebote", "Inclinar"),
-                    ajustes.animCajon
-                ) { onCambio(ajustes.copy(animCajon = it)) }
             }
         }
         Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-fun aparicionAnimada(indice: Int): Float {
-    val a = remember { Animatable(0.5f) }
-    LaunchedEffect(Unit) {
-        delay(minOf(indice, 12) * 25L)
-        a.animateTo(
-            1f,
-            spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMediumLow
-            )
-        )
-    }
-    return a.value
-}
-
-@Composable
-fun AppCelda(
-    app: AppItem,
-    indice: Int,
-    tamano: Int,
-    forma: Shape,
-    espaciado: Int,
-    mostrarNombre: Boolean,
-    onClick: (Rect) -> Unit
-) {
-    val escala = aparicionAnimada(indice)
-    val caja = remember { Caja() }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .graphicsLayer {
-                scaleX = escala
-                scaleY = escala
-                alpha = ((escala - 0.5f) * 2f).coerceIn(0f, 1f)
-            }
-            .clickable { onClick(caja.r) }
-            .padding(vertical = espaciado.dp)
-    ) {
-        Image(
-            bitmap = app.icon,
-            contentDescription = app.label,
-            modifier = Modifier
-                .size(tamano.dp)
-                .clip(forma)
-                .onGloballyPositioned { caja.r = it.boundsInWindow() }
-        )
-        if (mostrarNombre) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = app.label,
-                color = Color.White,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-fun AppFila(
-    app: AppItem,
-    indice: Int,
-    tamano: Int,
-    forma: Shape,
-    espaciado: Int,
-    onClick: (Rect) -> Unit
-) {
-    val escala = aparicionAnimada(indice)
-    val caja = remember { Caja() }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer {
-                alpha = ((escala - 0.5f) * 2f).coerceIn(0f, 1f)
-                translationX = (1f - escala) * 80f
-            }
-            .clickable { onClick(caja.r) }
-            .padding(horizontal = 12.dp, vertical = (espaciado / 2 + 2).dp)
-    ) {
-        Image(
-            bitmap = app.icon,
-            contentDescription = app.label,
-            modifier = Modifier
-                .size(tamano.dp)
-                .clip(forma)
-                .onGloballyPositioned { caja.r = it.boundsInWindow() }
-        )
-        Spacer(Modifier.width(16.dp))
-        Text(
-            text = app.label,
-            color = Color.White,
-            fontSize = 17.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
