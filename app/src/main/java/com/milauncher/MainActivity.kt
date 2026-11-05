@@ -14,6 +14,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -38,18 +39,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,20 +82,37 @@ data class AppItem(
 
 data class Entrada(val letra: String, val app: AppItem?)
 
-data class Atajo(val etiqueta: String, val icono: ImageBitmap, val accion: () -> Unit)
+data class Atajo(val etiqueta: String, val icono: ImageBitmap, val accion: (Rect) -> Unit)
+
+// Guarda la posición de un icono en pantalla sin provocar recomposiciones
+class Caja { var r: Rect = Rect.Zero }
 
 val coloresFondo = listOf(
     Color(0xFF000000),
     Color(0xFF0B1B3A),
     Color(0xFF2A0B3A),
     Color(0xFF0B2A1B),
-    Color(0xFF2B2B2B)
+    Color(0xFF2B2B2B),
+    Color(0xFF3A0B0B),
+    Color(0xFF3A200B),
+    Color(0xFF3A0B2A),
+    Color(0xFF0B3A3A),
+    Color(0xFF2E1F14)
 )
-val nombresColor = listOf("Negro", "Azul", "Violeta", "Verde", "Gris")
+val nombresColor = listOf(
+    "Negro", "Azul", "Violeta", "Verde", "Gris",
+    "Rojo", "Naranja", "Rosa", "Turquesa", "Marrón"
+)
+
+val paletaReloj = listOf(
+    Color(0xFFFFFFFF), Color(0xFFFFE082), Color(0xFFFBBF24), Color(0xFFFF8A65),
+    Color(0xFFFF5252), Color(0xFFF48FB1), Color(0xFFCE93D8), Color(0xFF9FA8DA),
+    Color(0xFF64B5F6), Color(0xFF4DD0E1), Color(0xFF80CBC4), Color(0xFFA5D6A7),
+    Color(0xFFC5E1A5), Color(0xFFBDBDBD), Color(0xFF000000)
+)
 
 val sombraTexto = Shadow(color = Color(0xAA000000), offset = Offset(0f, 2f), blurRadius = 6f)
 
-// Apps que se colocan solas en el dock (abajo) y en el inicio, buscadas por nombre
 val dockClaves = listOf(
     listOf("Teléfono", "Telefono", "Phone", "Llamadas"),
     listOf("Mensajes", "Messages"),
@@ -116,9 +140,10 @@ fun formaIcono(i: Int): Shape = when (i) {
     else -> RectangleShape
 }
 
-// Pantallas de ajustes: 0 = cerrado, 1 = menú, 2 = Apariencia, 3 = Cajón, 4 = Animaciones
+// Pantallas de ajustes: 0 cerrado, 1 menú, 2 Apariencia, 3 Cajón, 4 Animaciones, 5 Reloj
 fun atrasDe(p: Int): Int = when (p) {
     3 -> 2
+    5 -> 2
     2 -> 1
     4 -> 1
     else -> 0
@@ -145,16 +170,27 @@ class MainActivity : ComponentActivity() {
             .sortedBy { it.label.lowercase() }
     }
 
-    private fun openApp(app: AppItem, estilo: Int) {
+    private fun openApp(app: AppItem, estilo: Int, origen: Rect? = null) {
         val intent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
             component = ComponentName(app.packageName, app.activityName)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
+        val vista = window.decorView
+        val x = origen?.left?.toInt() ?: (vista.width / 2)
+        val y = origen?.top?.toInt() ?: (vista.height / 2)
+        val ancho = origen?.width?.toInt() ?: 1
+        val alto = origen?.height?.toInt() ?: 1
+
         val opciones = when (estilo) {
             1 -> ActivityOptions.makeCustomAnimation(this, R.anim.zoom_in, R.anim.zoom_out)
             2 -> ActivityOptions.makeCustomAnimation(this, R.anim.fade_in, R.anim.fade_out)
             3 -> ActivityOptions.makeCustomAnimation(this, R.anim.slide_in, R.anim.slide_out)
+            4 -> ActivityOptions.makeScaleUpAnimation(vista, x, y, ancho, alto)
+            5 -> ActivityOptions.makeClipRevealAnimation(vista, x, y, ancho, alto)
+            6 -> ActivityOptions.makeCustomAnimation(this, R.anim.slide_up_in, R.anim.slide_up_out)
+            7 -> ActivityOptions.makeCustomAnimation(this, R.anim.bounce_in, R.anim.bounce_out)
+            8 -> ActivityOptions.makeCustomAnimation(this, R.anim.spin_in, R.anim.spin_out)
             else -> null
         }
         startActivity(intent, opciones?.toBundle())
@@ -190,7 +226,6 @@ class MainActivity : ComponentActivity() {
         val letras = remember(entradas) { entradas.filter { it.app == null }.map { it.letra } }
         val listaEstado = rememberLazyListState()
 
-        // Apps automáticas del inicio
         val dockApps = remember(apps) {
             dockClaves.mapNotNull { buscarApp(apps, it) }.distinctBy { it.packageName }
         }
@@ -236,7 +271,6 @@ class MainActivity : ComponentActivity() {
         val colorBase = coloresFondo[ajustes.colorFondo.coerceIn(0, coloresFondo.size - 1)]
         val forma = formaIcono(ajustes.forma)
 
-        // Tipo de cajón: 0 Clásico, 1 One UI, 2 Pixel, 3 Inmersivo, 4 Flotante
         val buscarArriba = ajustes.tipoCajon == 1 || ajustes.tipoCajon == 2
         val recorte: Shape = when (ajustes.tipoCajon) {
             4 -> RoundedCornerShape(28.dp)
@@ -248,6 +282,13 @@ class MainActivity : ComponentActivity() {
         else Modifier
         val opacidadCajon = if (ajustes.tipoCajon == 1) 1f else ajustes.transparenciaCajon
         val bloqueo = remember { MutableInteractionSource() }
+
+        val alineacionReloj = when (ajustes.relojPosicion) {
+            1 -> Alignment.TopCenter
+            2 -> Alignment.TopEnd
+            3 -> Alignment.Center
+            else -> Alignment.TopStart
+        }
 
         LaunchedEffect(Unit) { apps = loadApps() }
         LaunchedEffect(cajonAbierto) { if (!cajonAbierto) busqueda = "" }
@@ -279,7 +320,6 @@ class MainActivity : ComponentActivity() {
                     onIr = { pantalla = it }
                 )
             } else {
-                // Pantalla de inicio: fondo limpio, reloj, apps automáticas y dock
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -309,9 +349,10 @@ class MainActivity : ComponentActivity() {
                     ) {
                         if (ajustes.mostrarReloj) {
                             Reloj(
-                                Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(start = 28.dp, top = 36.dp)
+                                ajustes = ajustes,
+                                modifier = Modifier
+                                    .align(alineacionReloj)
+                                    .padding(horizontal = 28.dp, vertical = 36.dp)
                             )
                         }
 
@@ -324,7 +365,9 @@ class MainActivity : ComponentActivity() {
                             val atajosInicio = listOf(
                                 Atajo("Juan Launcher", iconoPropio) { pantalla = 1 }
                             ) + inicioApps.map { app ->
-                                Atajo(app.label, app.icon) { openApp(app, ajustes.animacion) }
+                                Atajo(app.label, app.icon) { r ->
+                                    openApp(app, ajustes.animacion, r)
+                                }
                             }
 
                             atajosInicio.chunked(4).forEach { fila ->
@@ -358,8 +401,8 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     dockApps.forEach { app ->
                                         IconoAtajo(
-                                            atajo = Atajo(app.label, app.icon) {
-                                                openApp(app, ajustes.animacion)
+                                            atajo = Atajo(app.label, app.icon) { r ->
+                                                openApp(app, ajustes.animacion, r)
                                             },
                                             tamano = 56,
                                             forma = forma,
@@ -459,6 +502,13 @@ class MainActivity : ComponentActivity() {
                                     2 -> {
                                         alpha = p
                                     }
+                                    4 -> {
+                                        cameraDistance = 14f * density
+                                        transformOrigin = TransformOrigin(0.5f, 1f)
+                                        rotationX = (1f - p) * 35f
+                                        translationY = (1f - p) * alturaPx * 0.35f
+                                        alpha = p
+                                    }
                                     else -> {
                                         translationY = (1f - progreso.value.coerceAtMost(1.05f)) * alturaPx
                                         alpha = (p * 2f).coerceIn(0f, 1f)
@@ -478,17 +528,17 @@ class MainActivity : ComponentActivity() {
                             barra()
                         }
 
-                        val alAbrir: (AppItem) -> Unit = { app ->
+                        val alAbrir: (AppItem, Rect) -> Unit = { app, r ->
                             scope.launch { progreso.snapTo(0f) }
-                            openApp(app, ajustes.animacion)
+                            openApp(app, ajustes.animacion, r)
                         }
 
                         when (ajustes.estiloCajon) {
                             3 -> {
                                 LazyColumn(modifier = Modifier.fillMaxSize().padding(8.dp)) {
                                     itemsIndexed(filtradas) { indice, app ->
-                                        AppFila(app, indice, tamanoEstilo, forma, ajustes.espaciado) {
-                                            alAbrir(app)
+                                        AppFila(app, indice, tamanoEstilo, forma, ajustes.espaciado) { r ->
+                                            alAbrir(app, r)
                                         }
                                     }
                                 }
@@ -511,8 +561,8 @@ class MainActivity : ComponentActivity() {
                                                     )
                                                 )
                                             } else {
-                                                AppFila(app, indice, tamanoEstilo, forma, ajustes.espaciado) {
-                                                    alAbrir(app)
+                                                AppFila(app, indice, tamanoEstilo, forma, ajustes.espaciado) { r ->
+                                                    alAbrir(app, r)
                                                 }
                                             }
                                         }
@@ -558,7 +608,7 @@ class MainActivity : ComponentActivity() {
                                             forma = forma,
                                             espaciado = ajustes.espaciado,
                                             mostrarNombre = ajustes.mostrarNombres
-                                        ) { alAbrir(app) }
+                                        ) { r -> alAbrir(app, r) }
                                     }
                                 }
                             }
@@ -571,36 +621,60 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun Reloj(modifier: Modifier = Modifier) {
+fun Reloj(ajustes: Ajustes, modifier: Modifier = Modifier) {
     var ahora by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
             ahora = System.currentTimeMillis()
-            delay(15_000)
+            delay(10_000)
         }
     }
-    val hora = remember(ahora) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ahora))
+    val patron = if (ajustes.relojFormato24) "HH:mm" else "h:mm a"
+    val hora = remember(ahora, patron) {
+        SimpleDateFormat(patron, Locale.getDefault()).format(Date(ahora))
     }
     val fecha = remember(ahora) {
         SimpleDateFormat("EEEE, d 'de' MMMM", Locale.forLanguageTag("es"))
             .format(Date(ahora))
             .replaceFirstChar { it.uppercase() }
     }
-    Column(modifier = modifier) {
+    val color = Color(ajustes.relojColor)
+    val peso = when (ajustes.relojGrosor) {
+        1 -> FontWeight.Normal
+        2 -> FontWeight.Bold
+        else -> FontWeight.Light
+    }
+    val fuente = when (ajustes.relojFuente) {
+        1 -> FontFamily.Serif
+        2 -> FontFamily.Monospace
+        3 -> FontFamily.Cursive
+        else -> FontFamily.Default
+    }
+    val sombra = if (ajustes.relojSombra) sombraTexto else null
+    val alineacion = when (ajustes.relojPosicion) {
+        1, 3 -> Alignment.CenterHorizontally
+        2 -> Alignment.End
+        else -> Alignment.Start
+    }
+
+    Column(modifier = modifier, horizontalAlignment = alineacion) {
         Text(
             text = hora,
-            color = Color.White,
-            fontSize = 56.sp,
-            fontWeight = FontWeight.Light,
-            style = TextStyle(shadow = sombraTexto)
+            color = color,
+            fontSize = ajustes.relojTamano.sp,
+            fontWeight = peso,
+            fontFamily = fuente,
+            style = TextStyle(shadow = sombra)
         )
-        Text(
-            text = fecha,
-            color = Color.White,
-            fontSize = 16.sp,
-            style = TextStyle(shadow = sombraTexto)
-        )
+        if (ajustes.relojFecha) {
+            Text(
+                text = fecha,
+                color = color,
+                fontSize = (ajustes.relojTamano / 3.5f).coerceAtLeast(13f).sp,
+                fontFamily = fuente,
+                style = TextStyle(shadow = sombra)
+            )
+        }
     }
 }
 
@@ -613,16 +687,20 @@ fun IconoAtajo(
     mostrarNombre: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val caja = remember { Caja() }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
-            .clickable(enabled = activo) { atajo.accion() }
+            .clickable(enabled = activo) { atajo.accion(caja.r) }
             .padding(vertical = 4.dp)
     ) {
         Image(
             bitmap = atajo.icono,
             contentDescription = atajo.etiqueta,
-            modifier = Modifier.size(tamano.dp).clip(forma)
+            modifier = Modifier
+                .size(tamano.dp)
+                .clip(forma)
+                .onGloballyPositioned { caja.r = it.boundsInWindow() }
         )
         if (mostrarNombre) {
             Spacer(Modifier.height(4.dp))
@@ -666,6 +744,33 @@ fun Selector(
 }
 
 @Composable
+fun Interruptor(texto: String, valor: Boolean, onCambio: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(texto, color = Color.White, modifier = Modifier.weight(1f))
+        Switch(checked = valor, onCheckedChange = onCambio)
+    }
+}
+
+@Composable
+fun Muestra(color: Color, elegido: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(color)
+            .border(
+                width = if (elegido) 3.dp else 1.dp,
+                color = if (elegido) Color(0xFFFBBF24) else Color(0x55FFFFFF),
+                shape = CircleShape
+            )
+            .clickable { onClick() }
+    )
+}
+
+@Composable
 fun ItemMenu(texto: String, onClick: () -> Unit) {
     Text(
         text = "$texto  ›",
@@ -690,11 +795,13 @@ fun PantallaAjustes(
     var fondo by remember { mutableStateOf(ajustes.fondoOscuro) }
     var espaciado by remember { mutableStateOf(ajustes.espaciado.toFloat()) }
     var transp by remember { mutableStateOf(ajustes.transparenciaCajon) }
+    var relojTam by remember { mutableStateOf(ajustes.relojTamano.toFloat()) }
 
     val titulo = when (pantalla) {
         1 -> "Ajustes"
         2 -> "Apariencia"
         3 -> "Cajón de aplicaciones"
+        5 -> "Reloj"
         else -> "Animaciones"
     }
 
@@ -720,6 +827,8 @@ fun PantallaAjustes(
                 ItemMenu("Animaciones") { onIr(4) }
             }
             2 -> {
+                ItemMenu("Reloj") { onIr(5) }
+                ItemMenu("Cajón de aplicaciones") { onIr(3) }
                 Selector("Forma de iconos", listOf("Original", "Círculo", "Redondeado", "Cuadrado"), ajustes.forma) {
                     onCambio(ajustes.copy(forma = it))
                 }
@@ -734,28 +843,98 @@ fun PantallaAjustes(
                     onValueChangeFinished = { onCambio(ajustes.copy(fondoOscuro = fondo)) },
                     valueRange = 0f..0.9f
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Mostrar nombres en el cajón", color = Color.White, modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = ajustes.mostrarNombres,
-                        onCheckedChange = { onCambio(ajustes.copy(mostrarNombres = it)) }
-                    )
+                Interruptor("Mostrar nombres en el cajón", ajustes.mostrarNombres) {
+                    onCambio(ajustes.copy(mostrarNombres = it))
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Mostrar reloj en el inicio", color = Color.White, modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = ajustes.mostrarReloj,
-                        onCheckedChange = { onCambio(ajustes.copy(mostrarReloj = it)) }
-                    )
+            }
+            5 -> {
+                Reloj(
+                    ajustes = ajustes.copy(mostrarReloj = true),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp)
+                )
+                Interruptor("Mostrar reloj en el inicio", ajustes.mostrarReloj) {
+                    onCambio(ajustes.copy(mostrarReloj = it))
                 }
+                Interruptor("Mostrar fecha", ajustes.relojFecha) {
+                    onCambio(ajustes.copy(relojFecha = it))
+                }
+                Interruptor("Sombra del texto", ajustes.relojSombra) {
+                    onCambio(ajustes.copy(relojSombra = it))
+                }
+                Selector("Formato", listOf("24 horas", "12 horas"), if (ajustes.relojFormato24) 0 else 1) {
+                    onCambio(ajustes.copy(relojFormato24 = it == 0))
+                }
+                Selector("Fuente", listOf("Normal", "Serif", "Monospace", "Cursiva"), ajustes.relojFuente) {
+                    onCambio(ajustes.copy(relojFuente = it))
+                }
+                Selector("Grosor", listOf("Fino", "Normal", "Negrita"), ajustes.relojGrosor) {
+                    onCambio(ajustes.copy(relojGrosor = it))
+                }
+                Selector(
+                    "Posición",
+                    listOf("Arriba izq.", "Arriba centro", "Arriba der.", "Centro"),
+                    ajustes.relojPosicion
+                ) { onCambio(ajustes.copy(relojPosicion = it)) }
+
+                Spacer(Modifier.height(14.dp))
+                Text("Tamaño: ${relojTam.toInt()}", color = Color.White)
+                Slider(
+                    value = relojTam,
+                    onValueChange = { relojTam = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(relojTamano = relojTam.toInt())) },
+                    valueRange = 32f..96f
+                )
+
                 Spacer(Modifier.height(8.dp))
-                ItemMenu("Cajón de aplicaciones") { onIr(3) }
+                Text("Color", color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    paletaReloj.forEach { c ->
+                        Muestra(c, ajustes.relojColor == c.toArgb()) {
+                            onCambio(ajustes.copy(relojColor = c.toArgb()))
+                        }
+                    }
+                }
+
+                val actual = Color(ajustes.relojColor)
+                var rojo by remember(ajustes.relojColor) { mutableStateOf(actual.red) }
+                var verde by remember(ajustes.relojColor) { mutableStateOf(actual.green) }
+                var azul by remember(ajustes.relojColor) { mutableStateOf(actual.blue) }
+
+                Spacer(Modifier.height(12.dp))
+                Text("Color personalizado", color = Color(0x99FFFFFF), fontSize = 13.sp)
+                Text("Rojo: ${(rojo * 255).toInt()}", color = Color.White)
+                Slider(
+                    value = rojo,
+                    onValueChange = { rojo = it },
+                    onValueChangeFinished = {
+                        onCambio(ajustes.copy(relojColor = Color(rojo, verde, azul).toArgb()))
+                    },
+                    valueRange = 0f..1f
+                )
+                Text("Verde: ${(verde * 255).toInt()}", color = Color.White)
+                Slider(
+                    value = verde,
+                    onValueChange = { verde = it },
+                    onValueChangeFinished = {
+                        onCambio(ajustes.copy(relojColor = Color(rojo, verde, azul).toArgb()))
+                    },
+                    valueRange = 0f..1f
+                )
+                Text("Azul: ${(azul * 255).toInt()}", color = Color.White)
+                Slider(
+                    value = azul,
+                    onValueChange = { azul = it },
+                    onValueChangeFinished = {
+                        onCambio(ajustes.copy(relojColor = Color(rojo, verde, azul).toArgb()))
+                    },
+                    valueRange = 0f..1f
+                )
             }
             3 -> {
                 Selector(
@@ -817,12 +996,31 @@ fun PantallaAjustes(
                 )
             }
             else -> {
-                Selector("Animación al abrir apps", listOf("Ninguna", "Zoom", "Fade", "Deslizar"), ajustes.animacion) {
-                    onCambio(ajustes.copy(animacion = it))
-                }
-                Selector("Animación del cajón", listOf("Deslizar", "Zoom", "Fade", "Rebote"), ajustes.animCajon) {
-                    onCambio(ajustes.copy(animCajon = it))
-                }
+                Selector(
+                    "Animación al abrir apps",
+                    listOf(
+                        "Ninguna", "Zoom", "Fade", "Deslizar", "Desde el icono",
+                        "Revelar", "Subir", "Rebote", "Giro"
+                    ),
+                    ajustes.animacion
+                ) { onCambio(ajustes.copy(animacion = it)) }
+                Text(
+                    when (ajustes.animacion) {
+                        4 -> "La app crece desde el icono que tocas."
+                        5 -> "La app se destapa desde el icono."
+                        6 -> "La app sube desde abajo."
+                        7 -> "La app aparece con un pequeño rebote."
+                        8 -> "La app entra girando suavemente."
+                        else -> "Animación simple de ventana."
+                    },
+                    color = Color(0x99FFFFFF),
+                    fontSize = 12.sp
+                )
+                Selector(
+                    "Animación del cajón",
+                    listOf("Deslizar", "Zoom", "Fade", "Rebote", "Inclinar"),
+                    ajustes.animCajon
+                ) { onCambio(ajustes.copy(animCajon = it)) }
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -853,9 +1051,10 @@ fun AppCelda(
     forma: Shape,
     espaciado: Int,
     mostrarNombre: Boolean,
-    onClick: () -> Unit
+    onClick: (Rect) -> Unit
 ) {
     val escala = aparicionAnimada(indice)
+    val caja = remember { Caja() }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -864,13 +1063,16 @@ fun AppCelda(
                 scaleY = escala
                 alpha = ((escala - 0.5f) * 2f).coerceIn(0f, 1f)
             }
-            .clickable { onClick() }
+            .clickable { onClick(caja.r) }
             .padding(vertical = espaciado.dp)
     ) {
         Image(
             bitmap = app.icon,
             contentDescription = app.label,
-            modifier = Modifier.size(tamano.dp).clip(forma)
+            modifier = Modifier
+                .size(tamano.dp)
+                .clip(forma)
+                .onGloballyPositioned { caja.r = it.boundsInWindow() }
         )
         if (mostrarNombre) {
             Spacer(Modifier.height(4.dp))
@@ -892,9 +1094,10 @@ fun AppFila(
     tamano: Int,
     forma: Shape,
     espaciado: Int,
-    onClick: () -> Unit
+    onClick: (Rect) -> Unit
 ) {
     val escala = aparicionAnimada(indice)
+    val caja = remember { Caja() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -903,13 +1106,16 @@ fun AppFila(
                 alpha = ((escala - 0.5f) * 2f).coerceIn(0f, 1f)
                 translationX = (1f - escala) * 80f
             }
-            .clickable { onClick() }
+            .clickable { onClick(caja.r) }
             .padding(horizontal = 12.dp, vertical = (espaciado / 2 + 2).dp)
     ) {
         Image(
             bitmap = app.icon,
             contentDescription = app.label,
-            modifier = Modifier.size(tamano.dp).clip(forma)
+            modifier = Modifier
+                .size(tamano.dp)
+                .clip(forma)
+                .onGloballyPositioned { caja.r = it.boundsInWindow() }
         )
         Spacer(Modifier.width(16.dp))
         Text(

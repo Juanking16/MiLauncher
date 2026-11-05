@@ -13,7 +13,7 @@ data class Ajustes(
     val tamanoIcono: Int = 52,
     val fondoOscuro: Float = 0.2f,
     val mostrarNombres: Boolean = true,
-    val animacion: Int = 1,
+    val animacion: Int = 4,
     val animCajon: Int = 0,
     val estiloCajon: Int = 0,
     val forma: Int = 0,
@@ -21,7 +21,15 @@ data class Ajustes(
     val transparenciaCajon: Float = 0.85f,
     val colorFondo: Int = 0,
     val tipoCajon: Int = 1,
-    val mostrarReloj: Boolean = true
+    val mostrarReloj: Boolean = true,
+    val relojFormato24: Boolean = true,
+    val relojFecha: Boolean = true,
+    val relojTamano: Int = 56,
+    val relojGrosor: Int = 0,
+    val relojFuente: Int = 0,
+    val relojColor: Int = 0xFFFFFFFF.toInt(),
+    val relojPosicion: Int = 0,
+    val relojSombra: Boolean = true
 )
 
 class SettingsStore(private val context: Context) {
@@ -29,7 +37,7 @@ class SettingsStore(private val context: Context) {
     private val kTamano = intPreferencesKey("tamano_icono")
     private val kFondo = floatPreferencesKey("fondo_oscuro")
     private val kNombres = booleanPreferencesKey("mostrar_nombres")
-    private val kAnim = intPreferencesKey("animacion")
+    private val kAnim = intPreferencesKey("anim_apertura")
     private val kAnimCajon = intPreferencesKey("anim_cajon")
     private val kEstilo = intPreferencesKey("estilo_cajon")
     private val kForma = intPreferencesKey("forma")
@@ -38,6 +46,14 @@ class SettingsStore(private val context: Context) {
     private val kColor = intPreferencesKey("color_fondo")
     private val kTipo = intPreferencesKey("tipo_cajon")
     private val kReloj = booleanPreferencesKey("mostrar_reloj")
+    private val kRelojFormato = booleanPreferencesKey("reloj_formato24")
+    private val kRelojFecha = booleanPreferencesKey("reloj_fecha")
+    private val kRelojTamano = intPreferencesKey("reloj_tamano")
+    private val kRelojGrosor = intPreferencesKey("reloj_grosor")
+    private val kRelojFuente = intPreferencesKey("reloj_fuente")
+    private val kRelojColor = intPreferencesKey("reloj_color")
+    private val kRelojPos = intPreferencesKey("reloj_posicion")
+    private val kRelojSombra = booleanPreferencesKey("reloj_sombra")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
@@ -45,7 +61,7 @@ class SettingsStore(private val context: Context) {
             tamanoIcono = p[kTamano] ?: 52,
             fondoOscuro = p[kFondo] ?: 0.2f,
             mostrarNombres = p[kNombres] ?: true,
-            animacion = p[kAnim] ?: 1,
+            animacion = p[kAnim] ?: 4,
             animCajon = p[kAnimCajon] ?: 0,
             estiloCajon = p[kEstilo] ?: 0,
             forma = p[kForma] ?: 0,
@@ -53,7 +69,15 @@ class SettingsStore(private val context: Context) {
             transparenciaCajon = p[kTransp] ?: 0.85f,
             colorFondo = p[kColor] ?: 0,
             tipoCajon = p[kTipo] ?: 1,
-            mostrarReloj = p[kReloj] ?: true
+            mostrarReloj = p[kReloj] ?: true,
+            relojFormato24 = p[kRelojFormato] ?: true,
+            relojFecha = p[kRelojFecha] ?: true,
+            relojTamano = p[kRelojTamano] ?: 56,
+            relojGrosor = p[kRelojGrosor] ?: 0,
+            relojFuente = p[kRelojFuente] ?: 0,
+            relojColor = p[kRelojColor] ?: 0xFFFFFFFF.toInt(),
+            relojPosicion = p[kRelojPos] ?: 0,
+            relojSombra = p[kRelojSombra] ?: true
         )
     }
 
@@ -72,6 +96,14 @@ class SettingsStore(private val context: Context) {
             p[kColor] = a.colorFondo
             p[kTipo] = a.tipoCajon
             p[kReloj] = a.mostrarReloj
+            p[kRelojFormato] = a.relojFormato24
+            p[kRelojFecha] = a.relojFecha
+            p[kRelojTamano] = a.relojTamano
+            p[kRelojGrosor] = a.relojGrosor
+            p[kRelojFuente] = a.relojFuente
+            p[kRelojColor] = a.relojColor
+            p[kRelojPos] = a.relojPosicion
+            p[kRelojSombra] = a.relojSombra
         }
     }
 }
