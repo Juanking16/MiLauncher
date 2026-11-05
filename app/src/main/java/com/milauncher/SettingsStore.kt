@@ -29,7 +29,8 @@ data class Ajustes(
     val relojFuente: Int = 0,
     val relojColor: Int = 0xFFFFFFFF.toInt(),
     val relojPosicion: Int = 0,
-    val relojSombra: Boolean = true
+    val relojSombra: Boolean = true,
+    val transPagina: Int = 1
 )
 
 class SettingsStore(private val context: Context) {
@@ -54,6 +55,7 @@ class SettingsStore(private val context: Context) {
     private val kRelojColor = intPreferencesKey("reloj_color")
     private val kRelojPos = intPreferencesKey("reloj_posicion")
     private val kRelojSombra = booleanPreferencesKey("reloj_sombra")
+    private val kTransPagina = intPreferencesKey("trans_pagina")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
@@ -77,7 +79,8 @@ class SettingsStore(private val context: Context) {
             relojFuente = p[kRelojFuente] ?: 0,
             relojColor = p[kRelojColor] ?: 0xFFFFFFFF.toInt(),
             relojPosicion = p[kRelojPos] ?: 0,
-            relojSombra = p[kRelojSombra] ?: true
+            relojSombra = p[kRelojSombra] ?: true,
+            transPagina = p[kTransPagina] ?: 1
         )
     }
 
@@ -104,6 +107,7 @@ class SettingsStore(private val context: Context) {
             p[kRelojColor] = a.relojColor
             p[kRelojPos] = a.relojPosicion
             p[kRelojSombra] = a.relojSombra
+            p[kTransPagina] = a.transPagina
         }
     }
 }

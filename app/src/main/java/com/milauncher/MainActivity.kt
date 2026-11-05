@@ -26,6 +26,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,6 +71,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -130,8 +134,10 @@ val inicioClaves = listOf(
     listOf("Play Store", "Google Play Store")
 )
 
+// Primero busca el nombre exacto y, si no lo encuentra, uno que empiece igual
 fun buscarApp(apps: List<AppItem>, claves: List<String>): AppItem? =
     claves.firstNotNullOfOrNull { c -> apps.firstOrNull { it.label.equals(c, ignoreCase = true) } }
+        ?: claves.firstNotNullOfOrNull { c -> apps.firstOrNull { it.label.startsWith(c, ignoreCase = true) } }
 
 fun formaIcono(i: Int): Shape = when (i) {
     1 -> CircleShape
@@ -139,6 +145,34 @@ fun formaIcono(i: Int): Shape = when (i) {
     3 -> RoundedCornerShape(4.dp)
     else -> RectangleShape
 }
+
+// Efecto al pasar de página: 0 Deslizar, 1 Libro, 2 Cubo, 3 Zoom
+fun Modifier.efectoPagina(estado: PagerState, pagina: Int, estilo: Int): Modifier =
+    graphicsLayer {
+        val p = ((pagina - estado.currentPage) - estado.currentPageOffsetFraction)
+            .coerceIn(-1f, 1f)
+        val a = abs(p)
+        when (estilo) {
+            1 -> {
+                cameraDistance = 12f * density
+                transformOrigin = TransformOrigin(if (p < 0f) 1f else 0f, 0.5f)
+                rotationY = -p * 60f
+                alpha = 1f - a * 0.35f
+            }
+            2 -> {
+                cameraDistance = 12f * density
+                transformOrigin = TransformOrigin(if (p < 0f) 1f else 0f, 0.5f)
+                rotationY = p * 90f
+                alpha = 1f - a * 0.2f
+            }
+            3 -> {
+                scaleX = 1f - 0.25f * a
+                scaleY = 1f - 0.25f * a
+                alpha = 1f - a * 0.6f
+            }
+            else -> {}
+        }
+    }
 
 // Pantallas de ajustes: 0 cerrado, 1 menú, 2 Apariencia, 3 Cajón, 4 Animaciones, 5 Reloj
 fun atrasDe(p: Int): Int = when (p) {
@@ -239,6 +273,14 @@ class MainActivity : ComponentActivity() {
             packageManager.getApplicationIcon(packageName).toBitmap(128, 128).asImageBitmap()
         }
 
+        // Páginas del inicio: la 0 es el inicio y las demás tienen todas las apps
+        val columnasPagina = ajustes.columnas.coerceAtLeast(3)
+        val filasPagina = 5
+        val porPagina = columnasPagina * filasPagina
+        val paginasApps = if (apps.isEmpty()) 0 else (apps.size + porPagina - 1) / porPagina
+        val totalPaginas = 1 + paginasApps
+        val pagerState = rememberPagerState(pageCount = { totalPaginas })
+
         val progreso = remember { Animatable(0f) }
         val cajonAbierto = progreso.value > 0.01f
         val alturaPx = with(LocalDensity.current) {
@@ -248,7 +290,6 @@ class MainActivity : ComponentActivity() {
             spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
         else tween(300)
 
-        fun abrir() { scope.launch { progreso.animateTo(1f, spec) } }
         fun cerrar() { scope.launch { progreso.animateTo(0f, tween(250)) } }
         fun terminarArrastre() {
             scope.launch {
@@ -290,6 +331,12 @@ class MainActivity : ComponentActivity() {
             else -> Alignment.TopStart
         }
 
+        val atajosInicio = listOf(
+            Atajo("Juan Launcher", iconoPropio) { pantalla = 1 }
+        ) + inicioApps.map { app ->
+            Atajo(app.label, app.icon) { r -> openApp(app, ajustes.animacion, r) }
+        }
+
         LaunchedEffect(Unit) { apps = loadApps() }
         LaunchedEffect(cajonAbierto) { if (!cajonAbierto) busqueda = "" }
         LaunchedEffect(cajonAbierto, ajustes.tipoCajon) {
@@ -304,6 +351,9 @@ class MainActivity : ComponentActivity() {
         }
         BackHandler(enabled = pantalla != 0) { pantalla = atrasDe(pantalla) }
         BackHandler(enabled = cajonAbierto && pantalla == 0) { cerrar() }
+        BackHandler(enabled = !cajonAbierto && pantalla == 0 && pagerState.currentPage != 0) {
+            scope.launch { pagerState.animateScrollToPage(0) }
+        }
 
         Box(
             modifier = Modifier
@@ -337,7 +387,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                 ) {
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
@@ -347,87 +397,93 @@ class MainActivity : ComponentActivity() {
                                 scaleY = 1f - 0.05f * p
                             }
                     ) {
-                        if (ajustes.mostrarReloj) {
-                            Reloj(
-                                ajustes = ajustes,
-                                modifier = Modifier
-                                    .align(alineacionReloj)
-                                    .padding(horizontal = 28.dp, vertical = 36.dp)
-                            )
-                        }
-
-                        Column(
+                        HorizontalPager(
+                            state = pagerState,
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
+                                .weight(1f)
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
-                        ) {
-                            val atajosInicio = listOf(
-                                Atajo("Juan Launcher", iconoPropio) { pantalla = 1 }
-                            ) + inicioApps.map { app ->
-                                Atajo(app.label, app.icon) { r ->
-                                    openApp(app, ajustes.animacion, r)
-                                }
-                            }
-
-                            atajosInicio.chunked(4).forEach { fila ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp)
-                                ) {
-                                    fila.forEach { atajo ->
-                                        IconoAtajo(
-                                            atajo = atajo,
-                                            tamano = 58,
-                                            forma = forma,
-                                            activo = !cajonAbierto,
-                                            mostrarNombre = true,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                    repeat(4 - fila.size) { Spacer(Modifier.weight(1f)) }
-                                }
-                            }
-
-                            if (dockApps.isNotEmpty()) {
-                                Spacer(Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(30.dp))
-                                        .background(Color(0x33FFFFFF))
-                                        .padding(vertical = 10.dp)
-                                ) {
-                                    dockApps.forEach { app ->
-                                        IconoAtajo(
-                                            atajo = Atajo(app.label, app.icon) { r ->
-                                                openApp(app, ajustes.animacion, r)
-                                            },
-                                            tamano = 56,
-                                            forma = forma,
-                                            activo = !cajonAbierto,
-                                            mostrarNombre = false,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                }
-                            }
-
+                        ) { pagina ->
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.CenterHorizontally)
-                                    .clickable(enabled = !cajonAbierto) { abrir() }
-                                    .padding(horizontal = 40.dp, vertical = 12.dp)
+                                    .fillMaxSize()
+                                    .efectoPagina(pagerState, pagina, ajustes.transPagina)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(width = 44.dp, height = 4.dp)
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(Color(0x88FFFFFF))
-                                )
+                                if (pagina == 0) {
+                                    if (ajustes.mostrarReloj) {
+                                        Reloj(
+                                            ajustes = ajustes,
+                                            modifier = Modifier
+                                                .align(alineacionReloj)
+                                                .padding(horizontal = 28.dp, vertical = 36.dp)
+                                        )
+                                    }
+                                    Column(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp)
+                                    ) {
+                                        atajosInicio.chunked(4).forEach { fila ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 6.dp)
+                                            ) {
+                                                fila.forEach { atajo ->
+                                                    IconoAtajo(
+                                                        atajo = atajo,
+                                                        tamano = 58,
+                                                        forma = forma,
+                                                        activo = !cajonAbierto,
+                                                        mostrarNombre = true,
+                                                        modifier = Modifier.weight(1f)
+                                                    )
+                                                }
+                                                repeat(4 - fila.size) { Spacer(Modifier.weight(1f)) }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    val desde = (pagina - 1) * porPagina
+                                    PaginaApps(
+                                        lista = apps.drop(desde).take(porPagina),
+                                        columnas = columnasPagina,
+                                        filas = filasPagina,
+                                        tamano = ajustes.tamanoIcono,
+                                        forma = forma,
+                                        mostrarNombre = ajustes.mostrarNombres,
+                                        activo = !cajonAbierto
+                                    ) { app, r -> openApp(app, ajustes.animacion, r) }
+                                }
                             }
                         }
+
+                        Puntos(total = totalPaginas, actual = pagerState.currentPage)
+
+                        if (dockApps.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp)
+                                    .clip(RoundedCornerShape(30.dp))
+                                    .background(Color(0x33FFFFFF))
+                                    .padding(vertical = 10.dp)
+                            ) {
+                                dockApps.forEach { app ->
+                                    IconoAtajo(
+                                        atajo = Atajo(app.label, app.icon) { r ->
+                                            openApp(app, ajustes.animacion, r)
+                                        },
+                                        tamano = 56,
+                                        forma = forma,
+                                        activo = !cajonAbierto,
+                                        mostrarNombre = false,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
                     }
                 }
 
@@ -616,6 +672,73 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun PaginaApps(
+    lista: List<AppItem>,
+    columnas: Int,
+    filas: Int,
+    tamano: Int,
+    forma: Shape,
+    mostrarNombre: Boolean,
+    activo: Boolean,
+    onAbrir: (AppItem, Rect) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        repeat(filas) { fila ->
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                repeat(columnas) { col ->
+                    val app = lista.getOrNull(fila * columnas + col)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (app != null) {
+                            IconoAtajo(
+                                atajo = Atajo(app.label, app.icon) { r -> onAbrir(app, r) },
+                                tamano = tamano,
+                                forma = forma,
+                                activo = activo,
+                                mostrarNombre = mostrarNombre,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun Puntos(total: Int, actual: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        repeat(total.coerceAtMost(12)) { i ->
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(if (i == actual) 8.dp else 6.dp)
+                    .clip(CircleShape)
+                    .background(if (i == actual) Color.White else Color(0x66FFFFFF))
+            )
         }
     }
 }
@@ -843,7 +966,22 @@ fun PantallaAjustes(
                     onValueChangeFinished = { onCambio(ajustes.copy(fondoOscuro = fondo)) },
                     valueRange = 0f..0.9f
                 )
-                Interruptor("Mostrar nombres en el cajón", ajustes.mostrarNombres) {
+                Text("Columnas: ${columnas.toInt()}", color = Color.White)
+                Slider(
+                    value = columnas,
+                    onValueChange = { columnas = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(columnas = columnas.toInt())) },
+                    valueRange = 3f..6f,
+                    steps = 2
+                )
+                Text("Tamaño de iconos: ${tamano.toInt()}", color = Color.White)
+                Slider(
+                    value = tamano,
+                    onValueChange = { tamano = it },
+                    onValueChangeFinished = { onCambio(ajustes.copy(tamanoIcono = tamano.toInt())) },
+                    valueRange = 36f..72f
+                )
+                Interruptor("Mostrar nombres de las apps", ajustes.mostrarNombres) {
                     onCambio(ajustes.copy(mostrarNombres = it))
                 }
             }
@@ -965,21 +1103,6 @@ fun PantallaAjustes(
                 )
 
                 Spacer(Modifier.height(14.dp))
-                Text("Columnas: ${columnas.toInt()}", color = Color.White)
-                Slider(
-                    value = columnas,
-                    onValueChange = { columnas = it },
-                    onValueChangeFinished = { onCambio(ajustes.copy(columnas = columnas.toInt())) },
-                    valueRange = 3f..6f,
-                    steps = 2
-                )
-                Text("Tamaño de iconos: ${tamano.toInt()}", color = Color.White)
-                Slider(
-                    value = tamano,
-                    onValueChange = { tamano = it },
-                    onValueChangeFinished = { onCambio(ajustes.copy(tamanoIcono = tamano.toInt())) },
-                    valueRange = 36f..72f
-                )
                 Text("Espaciado entre apps: ${espaciado.toInt()}", color = Color.White)
                 Slider(
                     value = espaciado,
@@ -996,6 +1119,21 @@ fun PantallaAjustes(
                 )
             }
             else -> {
+                Selector(
+                    "Transición entre páginas",
+                    listOf("Deslizar", "Libro", "Cubo", "Zoom"),
+                    ajustes.transPagina
+                ) { onCambio(ajustes.copy(transPagina = it)) }
+                Text(
+                    when (ajustes.transPagina) {
+                        1 -> "Las páginas giran como las hojas de un libro."
+                        2 -> "Las páginas giran como las caras de un cubo."
+                        3 -> "La página se encoge y se desvanece al pasar."
+                        else -> "Deslizamiento simple."
+                    },
+                    color = Color(0x99FFFFFF),
+                    fontSize = 12.sp
+                )
                 Selector(
                     "Animación al abrir apps",
                     listOf(
