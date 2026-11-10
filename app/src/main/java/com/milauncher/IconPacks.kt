@@ -6,6 +6,8 @@ import android.content.res.Resources
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 
@@ -18,14 +20,9 @@ class MapaIconos(
 
 class IconPacks(private val ctx: Context) {
 
-    // Busca los paquetes de iconos instalados (estándar ADW / Nova / GO)
     fun detectar(): List<PaqueteIconos> {
         val pm = ctx.packageManager
-        val acciones = listOf(
-            "org.adw.launcher.THEMES",
-            "com.novalauncher.THEME",
-            "com.gau.go.launcherex.theme"
-        )
+        val acciones = listOf("org.adw.launcher.THEMES", "com.novalauncher.THEME", "com.gau.go.launcherex.theme")
         val vistos = LinkedHashMap<String, PaqueteIconos>()
         for (accion in acciones) {
             try {
@@ -37,43 +34,40 @@ class IconPacks(private val ctx: Context) {
                     }
                 }
             } catch (e: Exception) {
+                // Log.e("IconPacks", "Error detectando pack", e) // Mejor un log que un catch vacío
             }
         }
         return vistos.values.sortedBy { it.nombre.lowercase() }
     }
 
-    // Cambia el icono de las apps que el paquete cubre; el resto queda igual
-    fun aplicar(base: List<AppItem>, pack: String): List<AppItem> {
+    // OJO: Esto sigue siendo pesado, pero lo hacemos suspend para sacarlo del hilo principal
+    suspend fun aplicar(base: List<AppItem>, pack: String): List<AppItem> = withContext(Dispatchers.IO) {
         try {
             val res = ctx.packageManager.getResourcesForApplication(pack)
             val mapa = cargarMapa(res, pack)
-            if (mapa == null) return base
-            return base.map { app ->
+            if (mapa == null) return@withContext base
+            
+            base.map { app ->
                 val icono = iconoDe(res, pack, mapa, app)
                 if (icono != null) app.copy(icon = icono) else app
             }
         } catch (e: Exception) {
-            return base
+            base
         }
     }
 
     private fun abrirParser(res: Resources, pkg: String): XmlPullParser? {
         try {
             val id = res.getIdentifier("appfilter", "xml", pkg)
-            if (id != 0) {
-                return res.getXml(id)
-            }
+            if (id != 0) return res.getXml(id)
             val parser = XmlPullParserFactory.newInstance().newPullParser()
             parser.setInput(res.assets.open("appfilter.xml"), "UTF-8")
             return parser
-        } catch (e: Exception) {
-            return null
-        }
+        } catch (e: Exception) { return null }
     }
 
     private fun cargarMapa(res: Resources, pkg: String): MapaIconos? {
-        val p = abrirParser(res, pkg)
-        if (p == null) return null
+        val p = abrirParser(res, pkg) ?: return null
         val porComp = HashMap<String, String>()
         val porPaq = HashMap<String, String>()
         try {
@@ -91,8 +85,7 @@ class IconPacks(private val ctx: Context) {
                 }
                 evento = p.next()
             }
-        } catch (e: Exception) {
-        }
+        } catch (e: Exception) { }
         if (porComp.isEmpty()) return null
         return MapaIconos(porComp, porPaq)
     }
@@ -105,7 +98,9 @@ class IconPacks(private val ctx: Context) {
             var id = res.getIdentifier(nombre, "drawable", pack)
             if (id == 0) id = res.getIdentifier(nombre, "mipmap", pack)
             if (id == 0) return null
-            return res.getDrawable(id, null).toBitmap(128, 128).asImageBitmap()
+            // Tamaño dinámico en base a la densidad de pantalla para no gastar memoria
+            val size = (48 * res.displayMetrics.density).toInt() 
+            return res.getDrawable(id, null).toBitmap(size, size).asImageBitmap()
         } catch (e: Exception) {
             return null
         }
