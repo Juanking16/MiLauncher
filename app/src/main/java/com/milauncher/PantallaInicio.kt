@@ -18,28 +18,29 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun PantallaInicio(acciones: Acciones, resumeTick: Int) {
+fun PantallaInicio(
+    acciones: Acciones, 
+    resumeTick: Int,
+    viewModel: HomeViewModel = viewModel() // Inyectamos el ViewModel
+) {
     val ctx = LocalContext.current
-    val store = remember { SettingsStore(ctx.applicationContext) }
-    val ajustesCarga by store.flow.collectAsState(initial = null)
-    val cargado = ajustesCarga != null
-    val ajustes = ajustesCarga ?: Ajustes()
+    val uiState by viewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
 
-    var appsBase by remember { mutableStateOf<List<AppItem>>(emptyList()) }
-    var apps by remember { mutableStateOf<List<AppItem>>(emptyList()) }
-    var packs by remember { mutableStateOf<List<PaqueteIconos>>(emptyList()) }
     var pantalla by remember { mutableStateOf(0) }
     var menuApp by remember { mutableStateOf<AppItem?>(null) }
-    var packNuevo by remember { mutableStateOf<PaqueteIconos?>(null) }
-    
-    // Estado para el icono propio cargado de forma asíncrona
     var iconoPropio by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+
+    // Efecto para reaccionar a cuando el usuario vuelve a la app (instala/desinstala)
+    LaunchedEffect(resumeTick) {
+        viewModel.verificarCambios(resumeTick)
+    }
 
     // Cargar icono propio en segundo plano
     LaunchedEffect(Unit) {
@@ -48,157 +49,73 @@ fun PantallaInicio(acciones: Acciones, resumeTick: Int) {
         }
     }
 
-    // Cargar lista de apps
-    LaunchedEffect(resumeTick) {
-        val nuevas = withContext(Dispatchers.IO) { acciones.clavesApps() } // I/O en lugar de Default
-        val actuales = appsBase.map { it.packageName + "/" + it.activityName }.toSet()
-        if (nuevas != actuales) {
-            appsBase = withContext(Dispatchers.IO) { acciones.cargarApps() }
-        }
-    }
-
-    // Aplicar pack (AHORA ES ASÍNCRONO)
-    LaunchedEffect(appsBase, ajustes.iconPack, cargado) {
-        if (cargado) {
-            apps = if (ajustes.iconPack.isBlank()) {
-                appsBase
-            } else {
-                // acciones.aplicarPack debe llamar internamente a tu IconPacks.aplicar (que ahora es suspend)
-                acciones.aplicarPack(appsBase, ajustes.iconPack) 
-            }
-        }
-    }
-
-    // Detectar packs
-    LaunchedEffect(resumeTick, cargado) {
-        if (cargado) {
-            val detectados = withContext(Dispatchers.IO) { acciones.detectarPacks() }
-            packs = detectados
-            val vistos = ajustes.packsVistos
-            if (vistos == null) {
-                store.guardar(ajustes.copy(packsVistos = detectados.joinToString(",") { it.paquete }))
-            } else {
-                val conocidos = vistos.split(",").filter { it.isNotBlank() }
-                val nuevo = detectados.firstOrNull { it.paquete !in conocidos }
-                if (nuevo != null && packNuevo == null) packNuevo = nuevo
-            }
-        }
-    }
-
-    // ... (El resto de tu lógica de dockAuto, inicioCfg, paginación se mantiene igual) ...
-    val dockAuto = remember(apps) { dockClaves.mapNotNull { buscarApp(apps, it) }.distinctBy { it.packageName } }
-    val dockCfg = ajustes.dockPkgs
-    val inicioCfg = ajustes.inicioPkgs
-    val dockApps = remember(apps, dockCfg) {
-        if (dockCfg == null) dockAuto
-        else dockCfg.split(",").filter { it.isNotBlank() }.mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
-    }
-    val inicioApps = remember(apps, inicioCfg, dockApps) {
-        if (inicioCfg == null) {
-            inicioClaves.mapNotNull { buscarApp(apps, it) }
-                .distinctBy { it.packageName }
-                .filter { a -> dockApps.none { d -> d.packageName == a.packageName } }
-                .take(7)
-        } else {
-            inicioCfg.split(",").filter { it.isNotBlank() }.mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
-        }
-    }
-
-    val columnasPagina = ajustes.columnas.coerceAtLeast(3)
+    // Navegación
+    val columnasPagina = uiState.ajustes.columnas.coerceAtLeast(3)
     val filasPagina = 5
     val porPagina = columnasPagina * filasPagina
-    val paginasApps = if (apps.isEmpty()) 0 else (apps.size + porPagina - 1) / porPagina
+    val paginasApps = if (uiState.apps.isEmpty()) 0 else (uiState.apps.size + porPagina - 1) / porPagina
     val totalPaginas = 1 + paginasApps
     val pagerState = rememberPagerState(pageCount = { totalPaginas })
 
-    val colorBase = coloresFondo[ajustes.colorFondo.coerceIn(0, coloresFondo.size - 1)]
-    val forma = formaIcono(ajustes.forma)
-    val alineacionReloj = when (ajustes.relojPosicion) {
+    val colorBase = coloresFondo[uiState.ajustes.colorFondo.coerceIn(0, coloresFondo.size - 1)]
+    val forma = formaIcono(uiState.ajustes.forma)
+    
+    val alineacionReloj = when (uiState.ajustes.relojPosicion) {
         1 -> Alignment.TopCenter
         2 -> Alignment.TopEnd
         3 -> Alignment.Center
         else -> Alignment.TopStart
     }
-    val fondoVista = if (pantalla != 0 || ajustes.fondoModo == 1) Paleta.FondoAmoled
-    else colorBase.copy(alpha = ajustes.fondoOscuro)
+    val fondoVista = if (pantalla != 0 || uiState.ajustes.fondoModo == 1) Paleta.FondoAmoled
+    else colorBase.copy(alpha = uiState.ajustes.fondoOscuro)
 
     fun aviso(texto: String) { Toast.makeText(ctx, texto, Toast.LENGTH_SHORT).show() }
 
-    fun guardarListas(inicio: List<AppItem>, dock: List<AppItem>) {
-        scope.launch {
-            store.guardar(ajustes.copy(
-                inicioPkgs = inicio.joinToString(",") { it.packageName },
-                dockPkgs = dock.joinToString(",") { it.packageName }
-            ))
-        }
-    }
-
-    // ... (Tus funciones aInicio, aDock, quitar, mantener, resolverPack se mantienen igual) ...
-    fun aInicio(app: AppItem) {
-        val yaEsta = inicioApps.any { it.packageName == app.packageName }
-        if (!yaEsta && inicioApps.size >= 11) { aviso("El inicio está lleno"); return }
-        guardarListas(inicioApps.filter { it.packageName != app.packageName } + app, dockApps.filter { it.packageName != app.packageName })
-    }
-
-    fun aDock(app: AppItem) {
-        val yaEsta = dockApps.any { it.packageName == app.packageName }
-        if (!yaEsta && dockApps.size >= 5) { aviso("El dock está lleno (máximo 5)"); return }
-        guardarListas(inicioApps.filter { it.packageName != app.packageName }, dockApps.filter { it.packageName != app.packageName } + app)
-    }
-
-    fun quitar(app: AppItem) {
-        guardarListas(inicioApps.filter { it.packageName != app.packageName }, dockApps.filter { it.packageName != app.packageName })
-    }
-
-    fun mantener(app: AppItem?): (() -> Unit)? {
-        if (app == null) return null
-        return { menuApp = app }
-    }
-
-    fun resolverPack(p: PaqueteIconos, aplicar: Boolean) {
-        val vistos = (ajustes.packsVistos ?: "").split(",").filter { it.isNotBlank() }
-        val todos = (vistos + p.paquete).distinct().joinToString(",")
-        scope.launch {
-            if (aplicar) store.guardar(ajustes.copy(iconPack = p.paquete, packsVistos = todos))
-            else store.guardar(ajustes.copy(packsVistos = todos))
-        }
-        packNuevo = null
-    }
-
+    // Gestión de botones Atrás
     BackHandler(enabled = pantalla != 0) { pantalla = atrasDe(pantalla) }
-    BackHandler(enabled = pantalla == 0 && pagerState.currentPage != 0) { scope.launch { pagerState.animateScrollToPage(0) } }
+    BackHandler(enabled = pantalla == 0 && pagerState.currentPage != 0) { 
+        scope.launch { pagerState.animateScrollToPage(0) } 
+    }
     BackHandler(enabled = menuApp != null) { menuApp = null }
 
-    TemaLauncher(ajustes.acento) {
+    TemaLauncher(uiState.ajustes.acento) {
         Box(modifier = Modifier.fillMaxSize().background(fondoVista).statusBarsPadding().navigationBarsPadding()) {
             if (pantalla != 0) {
                 PantallaAjustes(
-                    pantalla = pantalla, ajustes = ajustes, packs = packs,
-                    onCambio = { nuevo -> scope.launch { store.guardar(nuevo) } },
-                    onIr = { pantalla = it }, onBuscarPacks = { acciones.buscarPacks() }
+                    pantalla = pantalla, 
+                    ajustes = uiState.ajustes, 
+                    packs = uiState.packs,
+                    onCambio = { nuevo -> viewModel.actualizarAjustes(nuevo) },
+                    onIr = { pantalla = it }, 
+                    onBuscarPacks = { acciones.buscarPacks() }
                 )
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
                     HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { pagina ->
-                        Box(modifier = Modifier.fillMaxSize().efectoPagina(pagerState, pagina, ajustes.transPagina)) {
+                        Box(modifier = Modifier.fillMaxSize().efectoPagina(pagerState, pagina, uiState.ajustes.transPagina)) {
                             if (pagina == 0) {
-                                if (ajustes.mostrarReloj) {
-                                    Reloj(ajustes = ajustes, modifier = Modifier.align(alineacionReloj).padding(horizontal = 28.dp, vertical = 36.dp))
+                                if (uiState.ajustes.mostrarReloj) {
+                                    Reloj(ajustes = uiState.ajustes, modifier = Modifier.align(alineacionReloj).padding(horizontal = 28.dp, vertical = 36.dp))
                                 }
+                                
                                 val elementos = buildList {
-                                    // Evitamos añadir el atajo propio si el icono aún no se ha cargado
                                     iconoPropio?.let { icono ->
                                         add(Elemento(Atajo("Juan Launcher", icono) { pantalla = 1 }, null))
                                     }
-                                    inicioApps.forEach { app ->
-                                        add(Elemento(Atajo(app.label, app.icon) { r -> acciones.openApp(app, ajustes.animacion, r) }, app))
+                                    uiState.inicioApps.forEach { app ->
+                                        add(Elemento(Atajo(app.label, app.icon) { r -> acciones.openApp(app, uiState.ajustes.animacion, r) }, app))
                                     }
                                 }
+                                
                                 Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 12.dp)) {
                                     elementos.chunked(4).forEach { fila ->
                                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                                             fila.forEach { el ->
-                                                IconoAtajo(atajo = el.atajo, tamano = 58, forma = forma, mostrarNombre = true, modifier = Modifier.weight(1f), alMantener = mantener(el.app))
+                                                IconoAtajo(
+                                                    atajo = el.atajo, tamano = 58, forma = forma, mostrarNombre = true, 
+                                                    modifier = Modifier.weight(1f), 
+                                                    alMantener = if (el.app != null) { { menuApp = el.app } } else null
+                                                )
                                             }
                                             repeat(4 - fila.size) { Spacer(Modifier.weight(1f)) }
                                         }
@@ -207,10 +124,10 @@ fun PantallaInicio(acciones: Acciones, resumeTick: Int) {
                             } else {
                                 val desde = (pagina - 1) * porPagina
                                 PaginaApps(
-                                    lista = apps.drop(desde).take(porPagina),
+                                    lista = uiState.apps.drop(desde).take(porPagina),
                                     columnas = columnasPagina, filas = filasPagina,
-                                    tamano = ajustes.tamanoIcono, forma = forma, mostrarNombre = ajustes.mostrarNombres,
-                                    onAbrir = { app, r -> acciones.openApp(app, ajustes.animacion, r) },
+                                    tamano = uiState.ajustes.tamanoIcono, forma = forma, mostrarNombre = uiState.ajustes.mostrarNombres,
+                                    onAbrir = { app, r -> acciones.openApp(app, uiState.ajustes.animacion, r) },
                                     onMantener = { app -> menuApp = app }
                                 )
                             }
@@ -219,12 +136,13 @@ fun PantallaInicio(acciones: Acciones, resumeTick: Int) {
 
                     Puntos(total = totalPaginas, actual = pagerState.currentPage)
 
-                    if (dockApps.isNotEmpty()) {
+                    if (uiState.dockApps.isNotEmpty()) {
                         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(30.dp)).background(Color(0x33FFFFFF)).padding(vertical = 10.dp)) {
-                            dockApps.forEach { app ->
+                            uiState.dockApps.forEach { app ->
                                 IconoAtajo(
-                                    atajo = Atajo(app.label, app.icon) { r -> acciones.openApp(app, ajustes.animacion, r) },
-                                    tamano = 56, forma = forma, mostrarNombre = false, modifier = Modifier.weight(1f), alMantener = mantener(app)
+                                    atajo = Atajo(app.label, app.icon) { r -> acciones.openApp(app, uiState.ajustes.animacion, r) },
+                                    tamano = 56, forma = forma, mostrarNombre = false, modifier = Modifier.weight(1f), 
+                                    alMantener = { menuApp = app }
                                 )
                             }
                         }
@@ -232,27 +150,38 @@ fun PantallaInicio(acciones: Acciones, resumeTick: Int) {
                     Spacer(Modifier.height(12.dp))
                 }
 
+                // Menú contextual
                 val sel = menuApp
                 if (sel != null) {
-                    // ... (Tu menú de opciones se mantiene igual) ...
-                    val enInicio = inicioApps.any { it.packageName == sel.packageName }
-                    val enDock = dockApps.any { it.packageName == sel.packageName }
+                    val enInicio = uiState.inicioApps.any { it.packageName == sel.packageName }
+                    val enDock = uiState.dockApps.any { it.packageName == sel.packageName }
+                    
                     val opciones = buildList<Opcion> {
-                        if (!enInicio) add(Opcion(if (enDock) "Mover al inicio" else "Agregar al inicio") { aInicio(sel); menuApp = null })
-                        if (!enDock) add(Opcion(if (enInicio) "Mover al dock" else "Agregar al dock") { aDock(sel); menuApp = null })
-                        if (enInicio || enDock) add(Opcion(if (enDock) "Quitar del dock" else "Quitar del inicio") { quitar(sel); menuApp = null })
+                        if (!enInicio) add(Opcion(if (enDock) "Mover al inicio" else "Agregar al inicio") { 
+                            viewModel.agregarAlInicio(sel)
+                            menuApp = null 
+                        })
+                        if (!enDock) add(Opcion(if (enInicio) "Mover al dock" else "Agregar al dock") { 
+                            viewModel.agregarAlDock(sel)
+                            menuApp = null 
+                        })
+                        if (enInicio || enDock) add(Opcion(if (enDock) "Quitar del dock" else "Quitar del inicio") { 
+                            viewModel.quitarApp(sel)
+                            menuApp = null 
+                        })
                         add(Opcion("Información de la app") { acciones.infoApp(sel); menuApp = null })
                         if (!sel.sistema) add(Opcion("Desinstalar", true) { acciones.desinstalar(sel); menuApp = null })
                     }
                     MenuApp(app = sel, opciones = opciones, onCerrar = { menuApp = null })
                 }
 
-                val nuevoPack = packNuevo
+                // Aviso de nuevo pack
+                val nuevoPack = uiState.packNuevo
                 if (nuevoPack != null && menuApp == null) {
                     AvisoPack(
                         nombre = nuevoPack.nombre,
-                        onAplicar = { resolverPack(nuevoPack, true) },
-                        onCerrar = { resolverPack(nuevoPack, false) }
+                        onAplicar = { viewModel.resolverPackNuevo(true) },
+                        onCerrar = { viewModel.resolverPackNuevo(false) }
                     )
                 }
             }
@@ -260,11 +189,5 @@ fun PantallaInicio(acciones: Acciones, resumeTick: Int) {
     }
 }
 
-@Composable
-fun PaginaApps(
-    lista: List<AppItem>, columnas: Int, filas: Int, tamano: Int, forma: Shape, mostrarNombre: Boolean,
-    onAbrir: (AppItem, Rect) -> Unit, onMantener: (AppItem) -> Unit
-) {
-    // Tu implementación de PaginaApps está bien, solo asegúrate de importar Shape
-    // ...
-}
+// PaginaApps se queda exactamente igual que antes.
+// ...

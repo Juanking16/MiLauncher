@@ -33,14 +33,12 @@ class IconPacks(private val ctx: Context) {
                         vistos[pkg] = PaqueteIconos(pkg, nombre)
                     }
                 }
-            } catch (e: Exception) {
-                // Log.e("IconPacks", "Error detectando pack", e) // Mejor un log que un catch vacío
-            }
+            } catch (e: Exception) { }
         }
         return vistos.values.sortedBy { it.nombre.lowercase() }
     }
 
-    // OJO: Esto sigue siendo pesado, pero lo hacemos suspend para sacarlo del hilo principal
+    // FUNCIÓN VITAL: Ahora es 'suspend' para que corra en segundo plano
     suspend fun aplicar(base: List<AppItem>, pack: String): List<AppItem> = withContext(Dispatchers.IO) {
         try {
             val res = ctx.packageManager.getResourcesForApplication(pack)
@@ -98,8 +96,8 @@ class IconPacks(private val ctx: Context) {
             var id = res.getIdentifier(nombre, "drawable", pack)
             if (id == 0) id = res.getIdentifier(nombre, "mipmap", pack)
             if (id == 0) return null
-            // Tamaño dinámico en base a la densidad de pantalla para no gastar memoria
-            val size = (48 * res.displayMetrics.density).toInt() 
+            // Tamaño dinámico para no saturar la memoria
+            val size = (48 * res.displayMetrics.density).toInt()
             return res.getDrawable(id, null).toBitmap(size, size).asImageBitmap()
         } catch (e: Exception) {
             return null

@@ -4,19 +4,17 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
     <queries>
-        <!-- Apps instaladas -->
+        <!-- Permiso vital para leer las apps instaladas -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
 
-        <!-- Icon Packs (ADW) -->
+        <!-- Permisos para leer Icon Packs -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="org.adw.launcher.THEMES" />
         </intent>
-
-        <!-- Icon Packs (Nova, GO, etc.) -->
         <intent><action android:name="org.adw.launcher.THEMES" /></intent>
         <intent><action android:name="com.novalauncher.THEME" /></intent>
         <intent><action android:name="com.gau.go.launcherex.theme" /></intent>
@@ -25,7 +23,7 @@
     </queries>
 
     <application
-        android:label="@string/app_name" 
+        android:label="Juan Launcher" 
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.MiLauncher"
         android:allowBackup="false"
