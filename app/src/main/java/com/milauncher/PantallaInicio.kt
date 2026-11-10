@@ -1,12 +1,13 @@
 package com.milauncher
 
-import android.widget.Toast
+import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,11 +26,14 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun PantallaInicio(
-    acciones: Acciones, 
     resumeTick: Int,
-    viewModel: HomeViewModel = viewModel() // Inyectamos el ViewModel
+    viewModel: HomeViewModel = viewModel()
 ) {
     val ctx = LocalContext.current
+    val activity = ctx as? Activity ?: return
+    val acciones = remember(activity) { Acciones(activity) }
+    
+    // LA IMPORTACIÓN QUE FALTABA ERA PARA ESTA LÍNEA (getValue)
     val uiState by viewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
 
@@ -37,19 +41,16 @@ fun PantallaInicio(
     var menuApp by remember { mutableStateOf<AppItem?>(null) }
     var iconoPropio by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
 
-    // Efecto para reaccionar a cuando el usuario vuelve a la app (instala/desinstala)
     LaunchedEffect(resumeTick) {
-        viewModel.verificarCambios(resumeTick)
+        viewModel.verificarCambios(resumeTick, acciones)
     }
 
-    // Cargar icono propio en segundo plano
     LaunchedEffect(Unit) {
         iconoPropio = withContext(Dispatchers.IO) {
             ctx.packageManager.getApplicationIcon(ctx.packageName).toBitmap(128, 128).asImageBitmap()
         }
     }
 
-    // Navegación
     val columnasPagina = uiState.ajustes.columnas.coerceAtLeast(3)
     val filasPagina = 5
     val porPagina = columnasPagina * filasPagina
@@ -69,9 +70,6 @@ fun PantallaInicio(
     val fondoVista = if (pantalla != 0 || uiState.ajustes.fondoModo == 1) Paleta.FondoAmoled
     else colorBase.copy(alpha = uiState.ajustes.fondoOscuro)
 
-    fun aviso(texto: String) { Toast.makeText(ctx, texto, Toast.LENGTH_SHORT).show() }
-
-    // Gestión de botones Atrás
     BackHandler(enabled = pantalla != 0) { pantalla = atrasDe(pantalla) }
     BackHandler(enabled = pantalla == 0 && pagerState.currentPage != 0) { 
         scope.launch { pagerState.animateScrollToPage(0) } 
@@ -80,6 +78,14 @@ fun PantallaInicio(
 
     TemaLauncher(uiState.ajustes.acento) {
         Box(modifier = Modifier.fillMaxSize().background(fondoVista).statusBarsPadding().navigationBarsPadding()) {
+            
+            if (uiState.isLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Cargando launcher...", color = Color.White)
+                }
+                return@TemaLauncher
+            }
+
             if (pantalla != 0) {
                 PantallaAjustes(
                     pantalla = pantalla, 
@@ -134,6 +140,13 @@ fun PantallaInicio(
                         }
                     }
 
+                    // Texto de depuración
+                    Text(
+                        text = "Apps totales: ${uiState.apps.size}",
+                        color = Color.Red,
+                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(4.dp)
+                    )
+
                     Puntos(total = totalPaginas, actual = pagerState.currentPage)
 
                     if (uiState.dockApps.isNotEmpty()) {
@@ -150,7 +163,6 @@ fun PantallaInicio(
                     Spacer(Modifier.height(12.dp))
                 }
 
-                // Menú contextual
                 val sel = menuApp
                 if (sel != null) {
                     val enInicio = uiState.inicioApps.any { it.packageName == sel.packageName }
@@ -158,16 +170,13 @@ fun PantallaInicio(
                     
                     val opciones = buildList<Opcion> {
                         if (!enInicio) add(Opcion(if (enDock) "Mover al inicio" else "Agregar al inicio") { 
-                            viewModel.agregarAlInicio(sel)
-                            menuApp = null 
+                            viewModel.agregarAlInicio(sel); menuApp = null 
                         })
                         if (!enDock) add(Opcion(if (enInicio) "Mover al dock" else "Agregar al dock") { 
-                            viewModel.agregarAlDock(sel)
-                            menuApp = null 
+                            viewModel.agregarAlDock(sel); menuApp = null 
                         })
                         if (enInicio || enDock) add(Opcion(if (enDock) "Quitar del dock" else "Quitar del inicio") { 
-                            viewModel.quitarApp(sel)
-                            menuApp = null 
+                            viewModel.quitarApp(sel); menuApp = null 
                         })
                         add(Opcion("Información de la app") { acciones.infoApp(sel); menuApp = null })
                         if (!sel.sistema) add(Opcion("Desinstalar", true) { acciones.desinstalar(sel); menuApp = null })
@@ -175,13 +184,12 @@ fun PantallaInicio(
                     MenuApp(app = sel, opciones = opciones, onCerrar = { menuApp = null })
                 }
 
-                // Aviso de nuevo pack
                 val nuevoPack = uiState.packNuevo
                 if (nuevoPack != null && menuApp == null) {
                     AvisoPack(
                         nombre = nuevoPack.nombre,
-                        onAplicar = { viewModel.resolverPackNuevo(true) },
-                        onCerrar = { viewModel.resolverPackNuevo(false) }
+                        onAplicar = { viewModel.resolverPackNuevo(true, acciones) },
+                        onCerrar = { viewModel.resolverPackNuevo(false, acciones) }
                     )
                 }
             }
@@ -189,5 +197,43 @@ fun PantallaInicio(
     }
 }
 
-// PaginaApps se queda exactamente igual que antes.
-// ...
+@Composable
+fun PaginaApps(
+    lista: List<AppItem>, columnas: Int, filas: Int, tamano: Int, forma: Shape, mostrarNombre: Boolean,
+    onAbrir: (AppItem, Rect) -> Unit, onMantener: (AppItem) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        repeat(filas) { fila ->
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                repeat(columnas) { col ->
+                    val app = lista.getOrNull(fila * columnas + col)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (app != null) {
+                            IconoAtajo(
+                                atajo = Atajo(app.label, app.icon) { r -> onAbrir(app, r) },
+                                tamano = tamano,
+                                forma = forma,
+                                mostrarNombre = mostrarNombre,
+                                modifier = Modifier.fillMaxWidth(),
+                                alMantener = { onMantener(app) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

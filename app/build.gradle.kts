@@ -34,6 +34,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.compose.animation:animation")
-    // Dependencia clave para usar viewModel() en Compose
+    
+    // Dependencias para ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.4") 
 }
