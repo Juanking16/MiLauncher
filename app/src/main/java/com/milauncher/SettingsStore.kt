@@ -29,7 +29,9 @@ data class Ajustes(
     val iconPack: String = "",
     val packsVistos: String? = null,
     val inicioPkgs: String? = null,
-    val dockPkgs: String? = null
+    val dockPkgs: String? = null,
+    val acento: Int = 0xFF751BCE.toInt(),
+    val fondoModo: Int = 0
 )
 
 class SettingsStore(private val context: Context) {
@@ -54,6 +56,8 @@ class SettingsStore(private val context: Context) {
     private val kVistos = stringPreferencesKey("packs_vistos")
     private val kInicio = stringPreferencesKey("inicio_pkgs")
     private val kDock = stringPreferencesKey("dock_pkgs")
+    private val kAcento = intPreferencesKey("acento")
+    private val kFondoModo = intPreferencesKey("fondo_modo")
 
     val flow: Flow<Ajustes> = context.dataStore.data.map { p ->
         Ajustes(
@@ -77,7 +81,9 @@ class SettingsStore(private val context: Context) {
             iconPack = p[kIconPack] ?: "",
             packsVistos = p[kVistos],
             inicioPkgs = p[kInicio],
-            dockPkgs = p[kDock]
+            dockPkgs = p[kDock],
+            acento = p[kAcento] ?: 0xFF751BCE.toInt(),
+            fondoModo = p[kFondoModo] ?: 0
         )
     }
 
@@ -107,6 +113,8 @@ class SettingsStore(private val context: Context) {
             p[kRelojSombra] = a.relojSombra
             p[kTransPagina] = a.transPagina
             p[kIconPack] = a.iconPack
+            p[kAcento] = a.acento
+            p[kFondoModo] = a.fondoModo
         }
     }
 }
